@@ -22,10 +22,15 @@ jobs:
         components: rustfmt, clippy
         cache: 'cargo'
     
-    - name: Rust Cache
+    - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
       with:
-        prefix-key: rust-cargo-${{ runner.os }}
+        prefix-key: rust-cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        shared-key: rust-cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+        save-if: ${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+        workspaces: "**/Cargo.toml"
+        targets: "**/target"
+        registry: "https://github.com/rust-lang/crates.io-index"
 
     - name: Check formatting
       run: cargo fmt --all -- --check
