@@ -201,7 +201,11 @@ mod tests {
     fn test_add_task() {
         let cli = parse_args(&["trtodo", "add", "Buy milk", "--category", "Home"]);
         match cli.command {
-            Commands::Add { title, category, priority } => {
+            Commands::Add {
+                title,
+                category,
+                priority,
+            } => {
                 assert_eq!(title, "Buy milk");
                 assert_eq!(category, "Home");
                 assert!(priority.is_none());
@@ -210,9 +214,21 @@ mod tests {
         }
 
         // Test with priority
-        let cli = parse_args(&["trtodo", "add", "Buy milk", "--category", "Home", "--priority", "high"]);
+        let cli = parse_args(&[
+            "trtodo",
+            "add",
+            "Buy milk",
+            "--category",
+            "Home",
+            "--priority",
+            "high",
+        ]);
         match cli.command {
-            Commands::Add { title, category, priority } => {
+            Commands::Add {
+                title,
+                category,
+                priority,
+            } => {
                 assert_eq!(title, "Buy milk");
                 assert_eq!(category, "Home");
                 assert_eq!(priority, Some(Priority::High));
@@ -226,7 +242,11 @@ mod tests {
         // Test basic list
         let cli = parse_args(&["trtodo", "list"]);
         match cli.command {
-            Commands::List { search, completed, priority } => {
+            Commands::List {
+                search,
+                completed,
+                priority,
+            } => {
                 assert!(search.is_none());
                 assert!(!completed);
                 assert!(priority.is_none());
@@ -235,9 +255,21 @@ mod tests {
         }
 
         // Test list with all options
-        let cli = parse_args(&["trtodo", "list", "--search", "milk", "--completed", "--priority", "low"]);
+        let cli = parse_args(&[
+            "trtodo",
+            "list",
+            "--search",
+            "milk",
+            "--completed",
+            "--priority",
+            "low",
+        ]);
         match cli.command {
-            Commands::List { search, completed, priority } => {
+            Commands::List {
+                search,
+                completed,
+                priority,
+            } => {
                 assert_eq!(search, Some("milk".to_string()));
                 assert!(completed);
                 assert_eq!(priority, Some(Priority::Low));
@@ -256,7 +288,7 @@ mod tests {
                     assert_eq!(category, "Home");
                 }
                 _ => panic!("Expected Category Use command"),
-            }
+            },
             _ => panic!("Expected Category command"),
         }
 
@@ -266,7 +298,7 @@ mod tests {
             Commands::Category { command } => match command {
                 CategoryCommands::List => {}
                 _ => panic!("Expected Category List command"),
-            }
+            },
             _ => panic!("Expected Category command"),
         }
     }
@@ -281,7 +313,7 @@ mod tests {
                     assert_eq!(key_value, "storage.type=json");
                 }
                 _ => panic!("Expected Config Set command"),
-            }
+            },
             _ => panic!("Expected Config command"),
         }
 
@@ -291,7 +323,7 @@ mod tests {
             Commands::Config { command } => match command {
                 ConfigCommands::List => {}
                 _ => panic!("Expected Config List command"),
-            }
+            },
             _ => panic!("Expected Config command"),
         }
     }
@@ -303,7 +335,15 @@ mod tests {
         assert!(result.is_err());
 
         // Test that priority must be valid
-        let result = try_parse_args(&["trtodo", "add", "Buy milk", "--category", "Home", "--priority", "invalid"]);
+        let result = try_parse_args(&[
+            "trtodo",
+            "add",
+            "Buy milk",
+            "--category",
+            "Home",
+            "--priority",
+            "invalid",
+        ]);
         assert!(result.is_err());
     }
 
@@ -312,7 +352,10 @@ mod tests {
         // Test 'x' alias for check
         let cli = parse_args(&["trtodo", "x", "Buy milk", "--category", "Home"]);
         match cli.command {
-            Commands::Check { title_or_id, category } => {
+            Commands::Check {
+                title_or_id,
+                category,
+            } => {
                 assert_eq!(title_or_id, "Buy milk");
                 assert_eq!(category, Some("Home".to_string()));
             }
@@ -322,7 +365,10 @@ mod tests {
         // Test 'mark' alias for check
         let cli = parse_args(&["trtodo", "mark", "Buy milk", "--category", "Home"]);
         match cli.command {
-            Commands::Check { title_or_id, category } => {
+            Commands::Check {
+                title_or_id,
+                category,
+            } => {
                 assert_eq!(title_or_id, "Buy milk");
                 assert_eq!(category, Some("Home".to_string()));
             }
@@ -332,7 +378,10 @@ mod tests {
         // Test 'o' alias for uncheck
         let cli = parse_args(&["trtodo", "o", "Buy milk", "--category", "Home"]);
         match cli.command {
-            Commands::Uncheck { title_or_id, category } => {
+            Commands::Uncheck {
+                title_or_id,
+                category,
+            } => {
                 assert_eq!(title_or_id, "Buy milk");
                 assert_eq!(category, Some("Home".to_string()));
             }
@@ -342,7 +391,10 @@ mod tests {
         // Test 'unmark' alias for uncheck
         let cli = parse_args(&["trtodo", "unmark", "Buy milk", "--category", "Home"]);
         match cli.command {
-            Commands::Uncheck { title_or_id, category } => {
+            Commands::Uncheck {
+                title_or_id,
+                category,
+            } => {
                 assert_eq!(title_or_id, "Buy milk");
                 assert_eq!(category, Some("Home".to_string()));
             }
@@ -355,7 +407,12 @@ mod tests {
         // Test simple move syntax
         let cli = parse_args(&["trtodo", "move", "Buy milk", "--to", "Shopping"]);
         match cli.command {
-            Commands::Move { task_name_or_id, to_category, from_category, task } => {
+            Commands::Move {
+                task_name_or_id,
+                to_category,
+                from_category,
+                task,
+            } => {
                 assert_eq!(task_name_or_id, Some("Buy milk".to_string()));
                 assert_eq!(to_category, Some("Shopping".to_string()));
                 assert!(from_category.is_none());
@@ -365,9 +422,16 @@ mod tests {
         }
 
         // Test extended move syntax
-        let cli = parse_args(&["trtodo", "move", "--from", "Home", "--to", "Shopping", "--task", "Buy milk"]);
+        let cli = parse_args(&[
+            "trtodo", "move", "--from", "Home", "--to", "Shopping", "--task", "Buy milk",
+        ]);
         match cli.command {
-            Commands::Move { task_name_or_id, to_category, from_category, task } => {
+            Commands::Move {
+                task_name_or_id,
+                to_category,
+                from_category,
+                task,
+            } => {
                 assert!(task_name_or_id.is_none());
                 assert_eq!(to_category, Some("Shopping".to_string()));
                 assert_eq!(from_category, Some("Home".to_string()));
@@ -379,7 +443,12 @@ mod tests {
         // Test extended move syntax without target category (move to uncategorized)
         let cli = parse_args(&["trtodo", "move", "--from", "Home", "--task", "Buy milk"]);
         match cli.command {
-            Commands::Move { task_name_or_id, to_category, from_category, task } => {
+            Commands::Move {
+                task_name_or_id,
+                to_category,
+                from_category,
+                task,
+            } => {
                 assert!(task_name_or_id.is_none());
                 assert!(to_category.is_none());
                 assert_eq!(from_category, Some("Home".to_string()));
