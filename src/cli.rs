@@ -47,6 +47,7 @@ pub enum Commands {
         category: String,
     },
     /// Check off a task
+    #[command(alias = "x", alias = "mark")]
     Check {
         /// Title or ID of the task
         title_or_id: String,
@@ -55,6 +56,7 @@ pub enum Commands {
         category: Option<String>,
     },
     /// Uncheck a task
+    #[command(alias = "o", alias = "unmark")]
     Uncheck {
         /// Title or ID of the task
         title_or_id: String,
@@ -68,11 +70,17 @@ pub enum Commands {
     UncheckAll,
     /// Move a task to another category
     Move {
-        /// Task name or ID
-        task_name_or_id: String,
+        /// Task name or ID (optional for extended syntax)
+        task_name_or_id: Option<String>,
         /// Target category name or ID
         #[arg(short = 't', long = "to")]
-        to_category: String,
+        to_category: Option<String>,
+        /// Source category name or ID (for extended syntax)
+        #[arg(long = "from")]
+        from_category: Option<String>,
+        /// Task name or ID (for extended syntax)
+        #[arg(long = "task")]
+        task: Option<String>,
     },
     /// List all tasks
     List {
@@ -98,6 +106,32 @@ pub enum Commands {
     },
     /// Flush deleted items
     Flush,
+}
+
+#[derive(Subcommand)]
+pub enum MoveCommands {
+    /// Move task using simple syntax
+    #[command(name = "")]
+    Simple {
+        /// Task name or ID
+        task_name_or_id: String,
+        /// Target category name or ID
+        #[arg(short = 't', long = "to")]
+        to_category: String,
+    },
+    /// Move task using extended syntax
+    #[command(name = "from")]
+    Extended {
+        /// Source category name or ID
+        #[arg(long = "from")]
+        from_category: String,
+        /// Target category name or ID (optional, omit to move to uncategorized)
+        #[arg(long = "to")]
+        to_category: Option<String>,
+        /// Task name or ID
+        #[arg(long = "task")]
+        task_name_or_id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -271,5 +305,87 @@ mod tests {
         // Test that priority must be valid
         let result = try_parse_args(&["trtodo", "add", "Buy milk", "--category", "Home", "--priority", "invalid"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_command_aliases() {
+        // Test 'x' alias for check
+        let cli = parse_args(&["trtodo", "x", "Buy milk", "--category", "Home"]);
+        match cli.command {
+            Commands::Check { title_or_id, category } => {
+                assert_eq!(title_or_id, "Buy milk");
+                assert_eq!(category, Some("Home".to_string()));
+            }
+            _ => panic!("Expected Check command"),
+        }
+
+        // Test 'mark' alias for check
+        let cli = parse_args(&["trtodo", "mark", "Buy milk", "--category", "Home"]);
+        match cli.command {
+            Commands::Check { title_or_id, category } => {
+                assert_eq!(title_or_id, "Buy milk");
+                assert_eq!(category, Some("Home".to_string()));
+            }
+            _ => panic!("Expected Check command"),
+        }
+
+        // Test 'o' alias for uncheck
+        let cli = parse_args(&["trtodo", "o", "Buy milk", "--category", "Home"]);
+        match cli.command {
+            Commands::Uncheck { title_or_id, category } => {
+                assert_eq!(title_or_id, "Buy milk");
+                assert_eq!(category, Some("Home".to_string()));
+            }
+            _ => panic!("Expected Uncheck command"),
+        }
+
+        // Test 'unmark' alias for uncheck
+        let cli = parse_args(&["trtodo", "unmark", "Buy milk", "--category", "Home"]);
+        match cli.command {
+            Commands::Uncheck { title_or_id, category } => {
+                assert_eq!(title_or_id, "Buy milk");
+                assert_eq!(category, Some("Home".to_string()));
+            }
+            _ => panic!("Expected Uncheck command"),
+        }
+    }
+
+    #[test]
+    fn test_move_commands() {
+        // Test simple move syntax
+        let cli = parse_args(&["trtodo", "move", "Buy milk", "--to", "Shopping"]);
+        match cli.command {
+            Commands::Move { task_name_or_id, to_category, from_category, task } => {
+                assert_eq!(task_name_or_id, Some("Buy milk".to_string()));
+                assert_eq!(to_category, Some("Shopping".to_string()));
+                assert!(from_category.is_none());
+                assert!(task.is_none());
+            }
+            _ => panic!("Expected Move command"),
+        }
+
+        // Test extended move syntax
+        let cli = parse_args(&["trtodo", "move", "--from", "Home", "--to", "Shopping", "--task", "Buy milk"]);
+        match cli.command {
+            Commands::Move { task_name_or_id, to_category, from_category, task } => {
+                assert!(task_name_or_id.is_none());
+                assert_eq!(to_category, Some("Shopping".to_string()));
+                assert_eq!(from_category, Some("Home".to_string()));
+                assert_eq!(task, Some("Buy milk".to_string()));
+            }
+            _ => panic!("Expected Move command"),
+        }
+
+        // Test extended move syntax without target category (move to uncategorized)
+        let cli = parse_args(&["trtodo", "move", "--from", "Home", "--task", "Buy milk"]);
+        match cli.command {
+            Commands::Move { task_name_or_id, to_category, from_category, task } => {
+                assert!(task_name_or_id.is_none());
+                assert!(to_category.is_none());
+                assert_eq!(from_category, Some("Home".to_string()));
+                assert_eq!(task, Some("Buy milk".to_string()));
+            }
+            _ => panic!("Expected Move command"),
+        }
     }
 }
