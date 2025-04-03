@@ -5,10 +5,8 @@ use clap::Parser;
 use cli::Cli;
 
 fn main() {
-    let cli = Cli::parse();
+    let _cli = Cli::parse();
 
     // TODO: Implement command handling
-    match cli.command {
-        _ => println!("Command handling not yet implemented"),
-    }
+    println!("Command handling not yet implemented");
 }
