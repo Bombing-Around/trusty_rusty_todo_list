@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
+use crate::models::{StorageData, Task, Category, Priority};
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -21,37 +21,6 @@ pub enum StorageType {
 pub trait Storage: Send + Sync {
     fn save(&self, data: &StorageData) -> Result<(), StorageError>;
     fn load(&self) -> Result<StorageData, StorageError>;
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct StorageData {
-    pub tasks: Vec<Task>,
-    pub categories: Vec<Category>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Task {
-    pub id: u64,
-    pub title: String,
-    pub category_id: u64,
-    pub completed: bool,
-    pub priority: Priority,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Category {
-    pub id: u64,
-    pub name: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum Priority {
-    High,
-    Medium,
-    Low,
 }
 
 pub struct JsonStorage {
