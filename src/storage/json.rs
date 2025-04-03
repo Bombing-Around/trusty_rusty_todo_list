@@ -48,6 +48,7 @@ impl Storage for JsonStorage {
             return Ok(StorageData {
                 tasks: Vec::new(),
                 categories: Vec::new(),
+                config: crate::config::Config::default(),
             });
         }
 
@@ -58,6 +59,7 @@ impl Storage for JsonStorage {
             return Ok(StorageData {
                 tasks: Vec::new(),
                 categories: Vec::new(),
+                config: crate::config::Config::default(),
             });
         }
 
@@ -127,6 +129,7 @@ mod tests {
                     created_at: now,
                 },
             ],
+            config: crate::config::Config::default(),
         }
     }
 
@@ -134,6 +137,8 @@ mod tests {
     fn test_json_storage() {
         let temp_file = NamedTempFile::new().unwrap();
         let storage = JsonStorage::new(temp_file.path());
+
+        // Test data
         let test_data = create_test_data();
 
         // Test save
@@ -145,6 +150,7 @@ mod tests {
         assert_eq!(loaded_data.categories.len(), 2);
         assert_eq!(loaded_data.tasks[0].title, "High Priority Task");
         assert_eq!(loaded_data.categories[0].name, "Work");
+        assert_eq!(loaded_data.tasks[0].priority, Priority::High);
     }
 
     #[test]
