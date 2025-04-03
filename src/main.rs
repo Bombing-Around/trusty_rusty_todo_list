@@ -1,9 +1,12 @@
 mod cli;
 mod models;
 
-use models::{Todo, Category};
+use clap::Parser;
+use cli::Cli;
 
 fn main() {
-    // Parse the CLI arguments
-    // Handle the operations
+    let _cli = Cli::parse();
+
+    // TODO: Implement command handling
+    println!("Command handling not yet implemented");
 }
