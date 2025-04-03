@@ -10,8 +10,10 @@ mod test_utils {
     pub use tempfile::NamedTempFile;
 }
 
+mod json;
 mod migrations;
 mod sqlite;
+pub(crate) use json::JsonStorage;
 pub(crate) use sqlite::SqliteStorage;
 
 #[derive(Error, Debug)]
@@ -299,60 +301,6 @@ pub trait Storage: Send + Sync {
 }
 
 #[allow(dead_code)]
-pub struct JsonStorage {
-    path: std::path::PathBuf,
-}
-
-#[allow(dead_code)]
-impl JsonStorage {
-    pub fn new<P: AsRef<Path>>(path: P) -> Self {
-        Self {
-            path: path.as_ref().to_path_buf(),
-        }
-    }
-}
-
-impl Storage for JsonStorage {
-    fn save(&self, data: &StorageData) -> Result<(), StorageError> {
-        // Create parent directories if they don't exist
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let json = serde_json::to_string_pretty(data)?;
-        std::fs::write(&self.path, json)?;
-
-        // Verify the write was successful by reading back
-        let contents = std::fs::read_to_string(&self.path)?;
-        let read_data: StorageData = serde_json::from_str(&contents)?;
-
-        // Verify data integrity
-        if read_data.tasks.len() != data.tasks.len()
-            || read_data.categories.len() != data.categories.len()
-        {
-            return Err(StorageError::Storage(
-                "Data integrity check failed".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-
-    fn load(&self) -> Result<StorageData, StorageError> {
-        if !self.path.exists() {
-            return Ok(StorageData {
-                tasks: Vec::new(),
-                categories: Vec::new(),
-            });
-        }
-
-        let contents = std::fs::read_to_string(&self.path)?;
-        let data: StorageData = serde_json::from_str(&contents)?;
-        Ok(data)
-    }
-}
-
-#[allow(dead_code)]
 pub fn create_storage(
     storage_type: StorageType,
     path: &Path,
@@ -372,255 +320,18 @@ pub fn create_storage(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use tempfile::NamedTempFile;
 
-    // Helper function to create test data
-    fn create_test_data() -> StorageData {
-        let now = Utc::now();
-        StorageData {
-            tasks: vec![
-                Task {
-                    id: 1,
-                    title: "High Priority Task".to_string(),
-                    category_id: 1,
-                    completed: false,
-                    priority: Priority::High,
-                    created_at: now,
-                    updated_at: now,
-                },
-                Task {
-                    id: 2,
-                    title: "Medium Priority Task".to_string(),
-                    category_id: 1,
-                    completed: true,
-                    priority: Priority::Medium,
-                    created_at: now,
-                    updated_at: now,
-                },
-                Task {
-                    id: 3,
-                    title: "Low Priority Task".to_string(),
-                    category_id: 2,
-                    completed: false,
-                    priority: Priority::Low,
-                    created_at: now,
-                    updated_at: now,
-                },
-                Task {
-                    id: 4,
-                    title: "Deleted Task".to_string(),
-                    category_id: 0, // Deleted category
-                    completed: false,
-                    priority: Priority::Medium,
-                    created_at: now,
-                    updated_at: now,
-                },
-            ],
-            categories: vec![
-                Category {
-                    id: 1,
-                    name: "Work".to_string(),
-                    created_at: now,
-                },
-                Category {
-                    id: 2,
-                    name: "Home".to_string(),
-                    created_at: now,
-                },
-            ],
-        }
-    }
-
-    // Helper function to create a test storage with data
-    fn create_test_storage() -> (JsonStorage, NamedTempFile) {
+    #[test]
+    fn test_storage_creation() {
         let temp_file = NamedTempFile::new().unwrap();
-        let storage = JsonStorage::new(temp_file.path());
-        let data = create_test_data();
-        storage.save(&data).unwrap();
-        (storage, temp_file)
-    }
 
-    #[test]
-    fn test_basic_storage_operations() {
-        let (storage, _temp) = create_test_storage();
-        let initial_data = storage.load().unwrap();
-        assert_eq!(initial_data.tasks.len(), 4);
-        assert_eq!(initial_data.categories.len(), 2);
+        // Test JSON storage creation
+        let json_storage = create_storage(StorageType::Json, temp_file.path()).unwrap();
+        assert!(json_storage.load().is_ok());
 
-        // Test add_task
-        let new_task = Task {
-            id: 5,
-            title: "New Task".to_string(),
-            category_id: 1,
-            completed: false,
-            priority: Priority::Medium,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        storage.add_task(new_task.clone()).unwrap();
-        let tasks = storage.get_tasks_by_category(1).unwrap();
-        assert_eq!(tasks.len(), 3); // Original 2 + new 1
-
-        // Test delete_task
-        storage.delete_task(5).unwrap();
-        let tasks = storage.get_tasks_by_category(1).unwrap();
-        assert_eq!(tasks.len(), 2);
-
-        // Test update_task
-        let mut task = storage.get_task(1).unwrap().unwrap();
-        task.title = "Updated Task".to_string();
-        storage.update_task(task).unwrap();
-        let updated_task = storage.get_task(1).unwrap().unwrap();
-        assert_eq!(updated_task.title, "Updated Task");
-
-        // Test add_category
-        let new_category = Category {
-            id: 3,
-            name: "New Category".to_string(),
-            created_at: Utc::now(),
-        };
-        storage.add_category(new_category.clone()).unwrap();
-        let categories = storage.get_all_categories().unwrap();
-        assert_eq!(categories.len(), 3);
-
-        // Test delete_category (empty category)
-        storage.delete_category(3).unwrap();
-        let categories = storage.get_all_categories().unwrap();
-        assert_eq!(categories.len(), 2);
-    }
-
-    #[test]
-    fn test_name_based_lookups() {
-        let (storage, _temp) = create_test_storage();
-
-        // Test get_tasks_by_title
-        let tasks = storage.get_tasks_by_title("High Priority Task").unwrap();
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].id, 1);
-
-        // Test get_category_by_name
-        let category = storage.get_category_by_name("Work").unwrap().unwrap();
-        assert_eq!(category.id, 1);
-
-        // Test get_category_id_by_name
-        let category_id = storage.get_category_id_by_name("Work").unwrap().unwrap();
-        assert_eq!(category_id, 1);
-
-        // Test get_tasks_by_category_name
-        let tasks = storage.get_tasks_by_category_name("Work").unwrap();
-        assert_eq!(tasks.len(), 2);
-    }
-
-    #[test]
-    fn test_task_movement() {
-        let (storage, _temp) = create_test_storage();
-
-        // Test move_task_to_category
-        storage.move_task_to_category(1, 2).unwrap();
-        let tasks = storage.get_tasks_by_category(2).unwrap();
-        assert_eq!(tasks.len(), 2); // Original 1 + moved 1
-        assert!(tasks.iter().any(|t| t.id == 1));
-    }
-
-    #[test]
-    fn test_soft_delete() {
-        let (storage, _temp) = create_test_storage();
-
-        // Test get_deleted_tasks
-        let deleted_tasks = storage.get_deleted_tasks().unwrap();
-        assert_eq!(deleted_tasks.len(), 1);
-
-        // Test soft_delete_task
-        storage.soft_delete_task(1).unwrap();
-        let deleted_tasks = storage.get_deleted_tasks().unwrap();
-        assert_eq!(deleted_tasks.len(), 2);
-
-        // Test purge_deleted_tasks
-        storage.purge_deleted_tasks(0).unwrap(); // Purge immediately
-        let deleted_tasks = storage.get_deleted_tasks().unwrap();
-        assert_eq!(deleted_tasks.len(), 0);
-    }
-
-    #[test]
-    fn test_filtering() {
-        let (storage, _temp) = create_test_storage();
-
-        // Test get_tasks_by_priority
-        let high_priority_tasks = storage.get_tasks_by_priority(Priority::High).unwrap();
-        assert_eq!(high_priority_tasks.len(), 1);
-
-        // Test get_completed_tasks
-        let completed_tasks = storage.get_completed_tasks().unwrap();
-        assert_eq!(completed_tasks.len(), 1);
-
-        // Test get_incomplete_tasks
-        let incomplete_tasks = storage.get_incomplete_tasks().unwrap();
-        assert_eq!(incomplete_tasks.len(), 3); // 3 incomplete tasks (including deleted)
-
-        // Test search_tasks
-        let search_results = storage.search_tasks("Priority").unwrap();
-        assert_eq!(search_results.len(), 3);
-
-        // Test combined filters
-        let tasks = storage
-            .get_tasks_by_priority_and_category(Priority::High, 1)
-            .unwrap();
-        assert_eq!(tasks.len(), 1);
-
-        let tasks = storage
-            .get_tasks_by_completion_and_category(true, 1)
-            .unwrap();
-        assert_eq!(tasks.len(), 1);
-
-        let tasks = storage
-            .get_tasks_by_completion_and_priority(true, Priority::Medium)
-            .unwrap();
-        assert_eq!(tasks.len(), 1);
-
-        let tasks = storage
-            .get_tasks_by_completion_priority_and_category(true, Priority::Medium, 1)
-            .unwrap();
-        assert_eq!(tasks.len(), 1);
-    }
-
-    #[test]
-    fn test_error_cases() {
-        let (storage, _temp) = create_test_storage();
-
-        // Test updating non-existent task
-        let non_existent_task = Task {
-            id: 999,
-            title: "Non-existent".to_string(),
-            category_id: 1,
-            completed: false,
-            priority: Priority::Medium,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        assert!(storage.update_task(non_existent_task).is_err());
-
-        // Test deleting category with tasks
-        assert!(storage.delete_category(1).is_err());
-
-        // Test moving non-existent task
-        assert!(storage.move_task_to_category(999, 2).is_err());
-
-        // Test getting non-existent category
-        let category = storage.get_category(999).unwrap();
-        assert!(category.is_none());
-    }
-
-    #[test]
-    fn test_id_generation() {
-        let (storage, _temp) = create_test_storage();
-
-        // Test get_next_task_id
-        let next_task_id = storage.get_next_task_id().unwrap();
-        assert_eq!(next_task_id, 5); // Since we have tasks 1-4 in test data
-
-        // Test get_next_category_id
-        let next_category_id = storage.get_next_category_id().unwrap();
-        assert_eq!(next_category_id, 3); // Since we have categories 1-2 in test data
+        // Test SQLite storage creation
+        let sqlite_storage = create_storage(StorageType::Sqlite, temp_file.path()).unwrap();
+        assert!(sqlite_storage.load().is_ok());
     }
 }
