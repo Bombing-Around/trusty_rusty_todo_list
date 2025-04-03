@@ -1,5 +1,6 @@
 use super::Storage;
 use super::StorageError;
+use super::migrations::apply_migrations;
 use crate::models::{Category, Priority, StorageData, Task};
 use rusqlite::{params, Connection};
 use std::path::Path;
@@ -54,7 +55,7 @@ impl SqliteStorage {
     }
 
     fn initialize_schema(&self) -> Result<(), StorageError> {
-        let conn = self
+        let mut conn = self
             .conn
             .lock()
             .map_err(|e| StorageError::Storage(format!("Failed to lock connection: {}", e)))?;
@@ -67,12 +68,26 @@ impl SqliteStorage {
         conn.execute_batch(INIT_SCHEMA)
             .map_err(|e| StorageError::Storage(format!("Failed to initialize schema: {}", e)))?;
 
-        // Then set the schema version
-        conn.execute(
-            "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-            params![SCHEMA_VERSION],
-        )
-        .map_err(|e| StorageError::Storage(format!("Failed to set schema version: {}", e)))?;
+        // Check if schema_version table exists and has a version
+        let version_exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version IS NOT NULL)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| StorageError::Storage(format!("Failed to check schema version: {}", e)))?;
+
+        if !version_exists {
+            // Set initial schema version
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                params![SCHEMA_VERSION],
+            )
+            .map_err(|e| StorageError::Storage(format!("Failed to set schema version: {}", e)))?;
+        }
+
+        // Apply any pending migrations
+        apply_migrations(&mut *conn)?;
 
         Ok(())
     }

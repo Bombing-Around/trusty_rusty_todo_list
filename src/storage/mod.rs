@@ -11,6 +11,7 @@ mod test_utils {
 }
 
 mod sqlite;
+mod migrations;
 pub(crate) use sqlite::SqliteStorage;
 
 #[derive(Error, Debug)]
