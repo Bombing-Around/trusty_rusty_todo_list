@@ -59,6 +59,10 @@ impl SqliteStorage {
             .lock()
             .map_err(|e| StorageError::Storage(format!("Failed to lock connection: {}", e)))?;
 
+        // Enable foreign key constraints
+        conn.execute("PRAGMA foreign_keys = ON", [])
+            .map_err(|e| StorageError::Storage(format!("Failed to enable foreign keys: {}", e)))?;
+
         // First create the tables
         conn.execute_batch(INIT_SCHEMA)
             .map_err(|e| StorageError::Storage(format!("Failed to initialize schema: {}", e)))?;
@@ -234,7 +238,9 @@ impl Storage for SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
+    use crate::storage::test_utils::*;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn test_sqlite_storage() {
@@ -279,5 +285,192 @@ mod tests {
         let loaded_data = storage.load().unwrap();
         assert_eq!(loaded_data.tasks.len(), 0);
         assert_eq!(loaded_data.categories.len(), 0);
+    }
+
+    #[test]
+    fn test_invalid_priority() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let storage = SqliteStorage::new(temp_file.path()).unwrap();
+
+        // Create a category first
+        {
+            let conn = storage.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO categories (id, name, created_at) VALUES (1, 'Test Category', '2024-01-01T00:00:00Z')",
+                [],
+            ).unwrap();
+
+            // Try to insert a task with invalid priority directly into SQLite
+            conn.execute(
+                "INSERT INTO tasks (id, title, category_id, completed, priority, created_at, updated_at) 
+                 VALUES (1, 'Test Task', 1, 0, 'INVALID_PRIORITY', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).unwrap();
+        }
+
+        // Attempting to load should fail due to invalid priority
+        let result = storage.load();
+        assert!(result.is_err());
+        if let Err(e) = result {
+            println!("Invalid priority error: {}", e);
+            assert!(format!("{}", e).contains("Invalid priority: INVALID_PRIORITY"));
+        }
+    }
+
+    #[test]
+    fn test_missing_foreign_key() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let storage = SqliteStorage::new(temp_file.path()).unwrap();
+
+        // Try to insert a task with non-existent category_id
+        let conn = storage.conn.lock().unwrap();
+        conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        let result = conn.execute(
+            "INSERT INTO tasks (id, title, category_id, completed, priority, created_at, updated_at) 
+             VALUES (1, 'Test Task', 999, 0, 'medium', datetime('now'), datetime('now'))",
+            [],
+        );
+
+        // SQLite should enforce foreign key constraint
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(format!("{}", e).contains("FOREIGN KEY constraint failed"));
+        }
+    }
+
+    #[test]
+    fn test_data_corruption() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let storage = SqliteStorage::new(temp_file.path()).unwrap();
+
+        // Create a category first
+        {
+            let conn = storage.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO categories (id, name, created_at) VALUES (1, 'Test Category', '2024-01-01T00:00:00Z')",
+                [],
+            ).unwrap();
+
+            // Insert task with corrupted datetime format
+            conn.execute(
+                "INSERT INTO tasks (id, title, category_id, completed, priority, created_at, updated_at) 
+                 VALUES (1, 'Test Task', 1, 0, 'medium', 'not-a-date', 'not-a-date')",
+                [],
+            ).unwrap();
+        }
+
+        // Attempting to load should fail due to corrupted datetime
+        let result = storage.load();
+        assert!(result.is_err());
+        if let Err(e) = result {
+            println!("Data corruption error: {}", e);
+            let err_msg = format!("{}", e);
+            assert!(err_msg.contains("input contains invalid characters"));
+        }
+    }
+
+    #[test]
+    fn test_concurrent_access() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let storage = SqliteStorage::new(temp_file.path()).unwrap();
+        let storage_clone = SqliteStorage::new(temp_file.path()).unwrap();
+
+        // Test data
+        let test_data = StorageData {
+            tasks: vec![Task {
+                id: 1,
+                title: "Test Task".to_string(),
+                category_id: 1,
+                completed: false,
+                priority: Priority::Medium,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            }],
+            categories: vec![Category {
+                id: 1,
+                name: "Test Category".to_string(),
+                created_at: chrono::Utc::now(),
+            }],
+        };
+
+        // Spawn a thread that saves data
+        let handle = thread::spawn(move || {
+            storage.save(&test_data).unwrap();
+        });
+
+        // Wait a bit to ensure the other thread has started
+        thread::sleep(Duration::from_millis(100));
+
+        // Try to load data from another connection while saving
+        let result = storage_clone.load();
+        assert!(result.is_ok());
+
+        // Wait for the save thread to complete
+        handle.join().unwrap();
+
+        // Verify the data was saved correctly
+        let loaded_data = storage_clone.load().unwrap();
+        assert_eq!(loaded_data.tasks.len(), 1);
+        assert_eq!(loaded_data.categories.len(), 1);
+    }
+
+    #[test]
+    fn test_schema_version() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let storage = SqliteStorage::new(temp_file.path()).unwrap();
+
+        // Verify schema version was set correctly
+        let conn = storage.conn.lock().unwrap();
+        let version: i32 = conn
+            .query_row("SELECT version FROM schema_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_large_data_set() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let storage = SqliteStorage::new(temp_file.path()).unwrap();
+
+        // Create a large dataset
+        let mut categories = Vec::new();
+        let mut tasks = Vec::new();
+        let now = chrono::Utc::now();
+
+        // Create 1000 categories
+        for i in 0..1000 {
+            categories.push(Category {
+                id: i,
+                name: format!("Category {}", i),
+                created_at: now,
+            });
+        }
+
+        // Create 10000 tasks
+        for i in 0..10000 {
+            tasks.push(Task {
+                id: i,
+                title: format!("Task {}", i),
+                category_id: i % 1000, // Distribute tasks across categories
+                completed: i % 2 == 0,
+                priority: match i % 3 {
+                    0 => Priority::High,
+                    1 => Priority::Medium,
+                    _ => Priority::Low,
+                },
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        let test_data = StorageData { tasks, categories };
+
+        // Test saving large dataset
+        storage.save(&test_data).unwrap();
+
+        // Test loading large dataset
+        let loaded_data = storage.load().unwrap();
+        assert_eq!(loaded_data.categories.len(), 1000);
+        assert_eq!(loaded_data.tasks.len(), 10000);
     }
 }

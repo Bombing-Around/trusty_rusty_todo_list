@@ -1,9 +1,17 @@
 use crate::models::StorageData;
+#[allow(unused_imports)]
+use crate::models::{Category, Priority, Task};
 use std::path::Path;
 use thiserror::Error;
 
+#[cfg(test)]
+mod test_utils {
+    pub use super::*;
+    pub use tempfile::NamedTempFile;
+}
+
 mod sqlite;
-use sqlite::SqliteStorage;
+pub(crate) use sqlite::SqliteStorage;
 
 #[derive(Error, Debug)]
 pub enum StorageError {
