@@ -1,6 +1,6 @@
+use super::migrations::apply_migrations;
 use super::Storage;
 use super::StorageError;
-use super::migrations::apply_migrations;
 use crate::models::{Category, Priority, StorageData, Task};
 use rusqlite::{params, Connection};
 use std::path::Path;
@@ -87,7 +87,7 @@ impl SqliteStorage {
         }
 
         // Apply any pending migrations
-        apply_migrations(&mut *conn)?;
+        apply_migrations(&mut conn)?;
 
         Ok(())
     }

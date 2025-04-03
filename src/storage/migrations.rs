@@ -1,12 +1,12 @@
 //! Database migration system for SQLite storage
-//! 
+//!
 //! This module provides a migration system that allows for version-controlled schema changes
 //! in the SQLite database. It supports both forward migrations (up) and backward migrations (down).
-//! 
+//!
 //! # Usage
-//! 
+//!
 //! To add a new migration:
-//! 
+//!
 //! 1. Add a new migration to the `MIGRATIONS` array:
 //! ```rust
 //! pub const MIGRATIONS: &[Migration] = &[
@@ -17,23 +17,23 @@
 //!     },
 //! ];
 //! ```
-//! 
+//!
 //! 2. The migration system will automatically:
 //!    - Detect the current schema version
 //!    - Apply any pending migrations in sequence
 //!    - Handle rollbacks if needed
 //!    - Maintain data integrity using transactions
-//! 
+//!
 //! # Migration Guidelines
-//! 
+//!
 //! 1. Each migration should have a unique version number
 //! 2. Migrations should be idempotent (safe to run multiple times)
 //! 3. Down migrations should exactly reverse the changes made in the up migration
 //! 4. Use transactions to ensure data consistency
 //! 5. Test both up and down migrations thoroughly
-//! 
+//!
 //! # Example
-//! 
+//!
 //! ```rust
 //! Migration {
 //!     version: 2,
@@ -52,6 +52,7 @@ use rusqlite::{Connection, Transaction};
 
 /// Represents a database migration with up and down SQL statements
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Migration {
     /// The version number of this migration
     pub version: i32,
@@ -81,13 +82,13 @@ pub fn get_current_version(conn: &Connection) -> Result<i32, StorageError> {
 }
 
 /// Apply any pending migrations to the database
-/// 
+///
 /// This function will:
 /// 1. Get the current schema version
 /// 2. Find any migrations with a higher version number
 /// 3. Apply those migrations in sequence
 /// 4. Update the schema version after each successful migration
-/// 
+///
 /// All migrations are applied within a transaction to ensure data consistency.
 pub fn apply_migrations(conn: &mut Connection) -> Result<(), StorageError> {
     let current_version = get_current_version(conn)?;
@@ -135,14 +136,15 @@ fn apply_migration(tx: &Transaction, migration: &Migration) -> Result<(), Storag
 }
 
 /// Rollback migrations to a specific version
-/// 
+///
 /// This function will:
 /// 1. Get the current schema version
 /// 2. Find any migrations with a version higher than the target
 /// 3. Apply the down migrations in reverse order
 /// 4. Update the schema version after each successful rollback
-/// 
+///
 /// All rollbacks are applied within a transaction to ensure data consistency.
+#[allow(dead_code)]
 pub fn rollback_migrations(conn: &mut Connection, target_version: i32) -> Result<(), StorageError> {
     let current_version = get_current_version(conn)?;
     if current_version > target_version {
@@ -176,6 +178,7 @@ pub fn rollback_migrations(conn: &mut Connection, target_version: i32) -> Result
 }
 
 /// Rollback a single migration
+#[allow(dead_code)]
 fn rollback_migration(tx: &Transaction, migration: &Migration) -> Result<(), StorageError> {
     // Execute the down migration
     tx.execute_batch(migration.down).map_err(|e| {
@@ -220,7 +223,10 @@ mod tests {
         // Test applying migrations
         apply_migrations(&mut conn).unwrap();
         let version = get_current_version(&conn).unwrap();
-        assert_eq!(version, 1, "Version should remain 1 as there are no migrations yet");
+        assert_eq!(
+            version, 1,
+            "Version should remain 1 as there are no migrations yet"
+        );
 
         // Test rolling back migrations
         rollback_migrations(&mut conn, 0).unwrap();
@@ -248,6 +254,9 @@ mod tests {
         tx.commit().unwrap();
 
         let version = get_current_version(&conn).unwrap();
-        assert_eq!(version, 1, "Version should be 1 after rolling back migration");
+        assert_eq!(
+            version, 1,
+            "Version should be 1 after rolling back migration"
+        );
     }
-} 
+}
