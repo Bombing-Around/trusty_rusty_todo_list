@@ -1,6 +1,9 @@
+use crate::models::StorageData;
 use std::path::Path;
 use thiserror::Error;
-use crate::models::{StorageData, Task, Category, Priority};
+
+mod sqlite;
+use sqlite::SqliteStorage;
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -8,25 +11,31 @@ pub enum StorageError {
     Io(#[from] std::io::Error),
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
     #[error("Storage error: {0}")]
     Storage(String),
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub enum StorageType {
     Json,
     Sqlite,
 }
 
+#[allow(dead_code)]
 pub trait Storage: Send + Sync {
     fn save(&self, data: &StorageData) -> Result<(), StorageError>;
     fn load(&self) -> Result<StorageData, StorageError>;
 }
 
+#[allow(dead_code)]
 pub struct JsonStorage {
     path: std::path::PathBuf,
 }
 
+#[allow(dead_code)]
 impl JsonStorage {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         Self {
@@ -56,6 +65,7 @@ impl Storage for JsonStorage {
     }
 }
 
+#[allow(dead_code)]
 pub fn create_storage(
     storage_type: StorageType,
     path: &Path,
@@ -66,10 +76,8 @@ pub fn create_storage(
             Ok(Box::new(storage))
         }
         StorageType::Sqlite => {
-            // TODO: Implement SQLite storage
-            Err(StorageError::Storage(
-                "SQLite storage not yet implemented".to_string(),
-            ))
+            let storage = SqliteStorage::new(path)?;
+            Ok(Box::new(storage))
         }
     }
 }
@@ -115,14 +123,23 @@ mod tests {
 
     #[test]
     fn test_storage_factory() {
+        // Test JSON storage creation
         let temp_file = NamedTempFile::new().unwrap();
         let storage = create_storage(StorageType::Json, temp_file.path()).unwrap();
 
-        // Test that we can use the storage
         let test_data = StorageData {
             tasks: vec![],
             categories: vec![],
         };
+
+        storage.save(&test_data).unwrap();
+        let loaded_data = storage.load().unwrap();
+        assert_eq!(loaded_data.tasks.len(), 0);
+        assert_eq!(loaded_data.categories.len(), 0);
+
+        // Test SQLite storage creation
+        let temp_file = NamedTempFile::new().unwrap();
+        let storage = create_storage(StorageType::Sqlite, temp_file.path()).unwrap();
 
         storage.save(&test_data).unwrap();
         let loaded_data = storage.load().unwrap();
