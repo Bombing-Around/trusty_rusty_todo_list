@@ -246,7 +246,11 @@ impl Storage for SqliteStorage {
             );
         }
 
-        Ok(StorageData { tasks, categories })
+        Ok(StorageData {
+            tasks,
+            categories,
+            config: crate::config::Config::default(),
+        })
     }
 }
 
@@ -278,6 +282,7 @@ mod tests {
                 name: "Test Category".to_string(),
                 created_at: chrono::Utc::now(),
             }],
+            config: crate::config::Config::default(),
         };
 
         // Test save
@@ -406,6 +411,7 @@ mod tests {
                 name: "Test Category".to_string(),
                 created_at: chrono::Utc::now(),
             }],
+            config: crate::config::Config::default(),
         };
 
         // Spawn a thread that saves data
@@ -478,7 +484,11 @@ mod tests {
             });
         }
 
-        let test_data = StorageData { tasks, categories };
+        let test_data = StorageData {
+            tasks,
+            categories,
+            config: crate::config::Config::default(),
+        };
 
         // Test saving large dataset
         storage.save(&test_data).unwrap();

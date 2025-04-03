@@ -10,6 +10,7 @@ mod test_utils {
     pub use tempfile::NamedTempFile;
 }
 
+pub mod config;
 mod json;
 mod migrations;
 mod sqlite;

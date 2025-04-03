@@ -1,3 +1,4 @@
+use crate::config::Config;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -29,4 +30,5 @@ pub enum Priority {
 pub struct StorageData {
     pub tasks: Vec<Task>,
     pub categories: Vec<Category>,
+    pub config: Config,
 }
