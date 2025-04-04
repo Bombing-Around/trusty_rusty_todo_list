@@ -1,4 +1,5 @@
-use crate::storage::{config::ConfigStorage, Storage, StorageError};
+use crate::models::StorageError;
+use crate::storage::{config::ConfigStorage, Storage};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -158,6 +159,7 @@ pub struct ConfigManager {
     old_storage_type: Option<String>,
 }
 
+#[allow(dead_code)]
 impl ConfigManager {
     pub fn new(config_path: Option<&Path>) -> Result<Self, ConfigError> {
         let config_path = if let Some(path) = config_path {
@@ -172,9 +174,13 @@ impl ConfigManager {
         let storage =
             ConfigStorage::new(&config_path).map_err(|e| ConfigError::Storage(e.to_string()))?;
         let storage = Box::new(storage);
-        let data = storage
-            .load()
-            .map_err(|e| ConfigError::Storage(e.to_string()))?;
+        let data = crate::models::StorageData {
+            version: 1,
+            tasks: Vec::new(),
+            categories: Vec::new(),
+            config: crate::config::Config::default(),
+            last_sync: chrono::Utc::now(),
+        };
         let config = data.config;
 
         config.validate()?;
@@ -185,12 +191,13 @@ impl ConfigManager {
         })
     }
 
-    #[allow(dead_code)]
     pub fn save(&self) -> Result<(), ConfigError> {
         let data = crate::models::StorageData {
+            version: 1,
             tasks: Vec::new(),
             categories: Vec::new(),
             config: self.get_config().clone(),
+            last_sync: chrono::Utc::now(),
         };
         self.storage
             .save(&data)

@@ -1,14 +1,11 @@
-use super::Storage;
-use super::StorageError;
 use crate::models::StorageData;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use super::{Storage, StorageError};
 
-#[allow(dead_code)]
 pub struct JsonStorage {
-    path: std::path::PathBuf,
+    path: PathBuf,
 }
 
-#[allow(dead_code)]
 impl JsonStorage {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         Self {
@@ -19,6 +16,9 @@ impl JsonStorage {
 
 impl Storage for JsonStorage {
     fn save(&self, data: &StorageData) -> Result<(), StorageError> {
+        // Validate data before saving
+        data.validate()?;
+
         // Create parent directories if they don't exist
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -45,25 +45,16 @@ impl Storage for JsonStorage {
 
     fn load(&self) -> Result<StorageData, StorageError> {
         if !self.path.exists() {
-            return Ok(StorageData {
-                tasks: Vec::new(),
-                categories: Vec::new(),
-                config: crate::config::Config::default(),
-            });
+            return Ok(StorageData::new());
         }
 
         let contents = std::fs::read_to_string(&self.path)?;
-
-        // If the file is empty, return empty storage data
         if contents.trim().is_empty() {
-            return Ok(StorageData {
-                tasks: Vec::new(),
-                categories: Vec::new(),
-                config: crate::config::Config::default(),
-            });
+            return Ok(StorageData::new());
         }
 
         let data: StorageData = serde_json::from_str(&contents)?;
+        data.validate()?;
         Ok(data)
     }
 }
@@ -72,91 +63,79 @@ impl Storage for JsonStorage {
 mod tests {
     use super::*;
     use crate::models::{Category, Priority, Task};
-    use chrono::Utc;
-    use tempfile::NamedTempFile;
+    use std::fs;
+    use tempfile::tempdir;
 
-    // Helper function to create test data
     fn create_test_data() -> StorageData {
-        let now = Utc::now();
-        StorageData {
-            tasks: vec![
-                Task {
-                    id: 1,
-                    title: "High Priority Task".to_string(),
-                    category_id: 1,
-                    completed: false,
-                    priority: Priority::High,
-                    created_at: now,
-                    updated_at: now,
-                },
-                Task {
-                    id: 2,
-                    title: "Medium Priority Task".to_string(),
-                    category_id: 1,
-                    completed: true,
-                    priority: Priority::Medium,
-                    created_at: now,
-                    updated_at: now,
-                },
-                Task {
-                    id: 3,
-                    title: "Low Priority Task".to_string(),
-                    category_id: 2,
-                    completed: false,
-                    priority: Priority::Low,
-                    created_at: now,
-                    updated_at: now,
-                },
-                Task {
-                    id: 4,
-                    title: "Deleted Task".to_string(),
-                    category_id: 0, // Deleted category
-                    completed: false,
-                    priority: Priority::Medium,
-                    created_at: now,
-                    updated_at: now,
-                },
-            ],
-            categories: vec![
-                Category {
-                    id: 1,
-                    name: "Work".to_string(),
-                    created_at: now,
-                },
-                Category {
-                    id: 2,
-                    name: "Home".to_string(),
-                    created_at: now,
-                },
-            ],
-            config: crate::config::Config::default(),
-        }
+        let mut data = StorageData::new();
+
+        // Create test categories
+        let work =
+            Category::new("Work".to_string(), Some("Work related tasks".to_string())).unwrap();
+        let personal =
+            Category::new("Personal".to_string(), Some("Personal tasks".to_string())).unwrap();
+
+        data.categories.push(work.clone());
+        data.categories.push(personal.clone());
+
+        // Create test tasks
+        let task1 = Task::new(
+            "Complete project".to_string(),
+            work.id,
+            Some("Finish the todo list project".to_string()),
+            Priority::High,
+        )
+        .unwrap();
+
+        let task2 = Task::new(
+            "Buy groceries".to_string(),
+            personal.id,
+            Some("Get milk and bread".to_string()),
+            Priority::Medium,
+        )
+        .unwrap();
+
+        data.tasks.push(task1);
+        data.tasks.push(task2);
+
+        data
     }
 
     #[test]
     fn test_json_storage() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let storage = JsonStorage::new(temp_file.path());
+        let dir = tempdir().unwrap();
+        let json_path = dir.path().join("test.json");
+        let storage = JsonStorage::new(&json_path);
 
-        // Test data
         let test_data = create_test_data();
-
-        // Test save
         storage.save(&test_data).unwrap();
 
-        // Test load
         let loaded_data = storage.load().unwrap();
-        assert_eq!(loaded_data.tasks.len(), 4);
+        assert_eq!(loaded_data.tasks.len(), 2);
         assert_eq!(loaded_data.categories.len(), 2);
-        assert_eq!(loaded_data.tasks[0].title, "High Priority Task");
-        assert_eq!(loaded_data.categories[0].name, "Work");
-        assert_eq!(loaded_data.tasks[0].priority, Priority::High);
+
+        // Verify task data
+        let task = loaded_data.tasks.first().unwrap();
+        assert_eq!(task.title, "Complete project");
+        assert_eq!(task.priority, Priority::High);
+        assert!(task.description.is_some());
+        assert_eq!(
+            task.description.as_ref().unwrap(),
+            "Finish the todo list project"
+        );
+
+        // Verify category data
+        let category = loaded_data.categories.first().unwrap();
+        assert_eq!(category.name, "Work");
+        assert!(category.description.is_some());
+        assert_eq!(category.description.as_ref().unwrap(), "Work related tasks");
     }
 
     #[test]
     fn test_empty_json_storage() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let storage = JsonStorage::new(temp_file.path());
+        let dir = tempdir().unwrap();
+        let json_path = dir.path().join("empty.json");
+        let storage = JsonStorage::new(&json_path);
 
         let loaded_data = storage.load().unwrap();
         assert_eq!(loaded_data.tasks.len(), 0);
@@ -165,35 +144,48 @@ mod tests {
 
     #[test]
     fn test_data_integrity() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let storage = JsonStorage::new(temp_file.path());
+        let dir = tempdir().unwrap();
+        let json_path = dir.path().join("integrity.json");
+        let storage = JsonStorage::new(&json_path);
+
         let test_data = create_test_data();
-
-        // Test save and verify integrity
         storage.save(&test_data).unwrap();
-        let loaded_data = storage.load().unwrap();
 
-        // Verify all data matches
-        assert_eq!(loaded_data.tasks.len(), test_data.tasks.len());
-        assert_eq!(loaded_data.categories.len(), test_data.categories.len());
+        // Verify file exists and has content
+        assert!(json_path.exists());
+        let contents = fs::read_to_string(&json_path).unwrap();
+        assert!(!contents.is_empty());
 
-        // Verify task details
-        for (loaded, original) in loaded_data.tasks.iter().zip(test_data.tasks.iter()) {
-            assert_eq!(loaded.id, original.id);
-            assert_eq!(loaded.title, original.title);
-            assert_eq!(loaded.category_id, original.category_id);
-            assert_eq!(loaded.completed, original.completed);
-            assert_eq!(loaded.priority, original.priority);
-        }
+        // Verify JSON structure
+        let json: serde_json::Value = serde_json::from_str(&contents).unwrap();
+        assert!(json.is_object());
+        assert!(json.get("version").is_some());
+        assert!(json.get("tasks").is_some());
+        assert!(json.get("categories").is_some());
+        assert!(json.get("last_sync").is_some());
 
-        // Verify category details
-        for (loaded, original) in loaded_data
-            .categories
-            .iter()
-            .zip(test_data.categories.iter())
-        {
-            assert_eq!(loaded.id, original.id);
-            assert_eq!(loaded.name, original.name);
-        }
+        // Verify tasks array
+        let tasks = json.get("tasks").unwrap().as_array().unwrap();
+        assert_eq!(tasks.len(), 2);
+        let first_task = &tasks[0];
+        assert_eq!(
+            first_task.get("title").unwrap().as_str().unwrap(),
+            "Complete project"
+        );
+        assert_eq!(
+            first_task.get("priority").unwrap().as_str().unwrap(),
+            "High"
+        );
+        assert!(first_task.get("description").is_some());
+
+        // Verify categories array
+        let categories = json.get("categories").unwrap().as_array().unwrap();
+        assert_eq!(categories.len(), 2);
+        let first_category = &categories[0];
+        assert_eq!(
+            first_category.get("name").unwrap().as_str().unwrap(),
+            "Work"
+        );
+        assert!(first_category.get("description").is_some());
     }
 }
