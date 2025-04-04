@@ -1,43 +1,23 @@
-use crate::models::StorageData;
-#[allow(unused_imports)]
-use crate::models::{Category, Priority, Task};
+use crate::models::{Category, Priority, StorageData, StorageError, Task};
+use std::boxed::Box;
 use std::path::Path;
-use thiserror::Error;
-
-#[cfg(test)]
-mod test_utils {
-    pub use super::*;
-    pub use tempfile::NamedTempFile;
-}
 
 pub mod config;
-mod json;
-mod migrations;
-mod sqlite;
-pub(crate) use json::JsonStorage;
-pub(crate) use sqlite::SqliteStorage;
+pub mod json;
+pub mod sqlite;
 
-#[derive(Error, Debug)]
-pub enum StorageError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-    #[error("SQLite error: {0}")]
-    Sqlite(#[from] rusqlite::Error),
-    #[error("Storage error: {0}")]
-    Storage(String),
-}
+#[cfg(test)]
+mod test_utils {}
 
-#[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
+#[derive(Debug, Clone, Copy)]
 pub enum StorageType {
     Json,
     Sqlite,
 }
 
 #[allow(dead_code)]
-pub trait Storage: Send + Sync {
+pub trait Storage {
     fn save(&self, data: &StorageData) -> Result<(), StorageError>;
     fn load(&self) -> Result<StorageData, StorageError>;
 
@@ -308,11 +288,11 @@ pub fn create_storage(
 ) -> Result<Box<dyn Storage>, StorageError> {
     match storage_type {
         StorageType::Json => {
-            let storage = JsonStorage::new(path);
+            let storage = json::JsonStorage::new(path);
             Ok(Box::new(storage))
         }
         StorageType::Sqlite => {
-            let storage = SqliteStorage::new(path)?;
+            let storage = sqlite::SqliteStorage::new(path)?;
             Ok(Box::new(storage))
         }
     }

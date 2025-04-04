@@ -20,7 +20,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt, clippy
-        cache: 'cargo'
+        toolchain: stable
     
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
@@ -29,8 +29,8 @@ jobs:
         shared-key: rust-cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
         save-if: ${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
         workspaces: "**/Cargo.toml"
-        targets: "**/target"
-        registry: "https://github.com/rust-lang/crates.io-index"
+        cache-targets: true
+        cache-on-failure: true
 
     - name: Check formatting
       run: cargo fmt --all -- --check

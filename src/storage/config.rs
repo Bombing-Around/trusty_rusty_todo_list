@@ -44,9 +44,11 @@ impl Storage for ConfigStorage {
     fn load(&self) -> Result<crate::models::StorageData, StorageError> {
         if !self.path.exists() {
             return Ok(crate::models::StorageData {
+                version: 1,
                 tasks: Vec::new(),
                 categories: Vec::new(),
                 config: Config::default(),
+                last_sync: chrono::Utc::now(),
             });
         }
 
@@ -55,17 +57,21 @@ impl Storage for ConfigStorage {
         // If the file is empty, return default config
         if contents.trim().is_empty() {
             return Ok(crate::models::StorageData {
+                version: 1,
                 tasks: Vec::new(),
                 categories: Vec::new(),
                 config: Config::default(),
+                last_sync: chrono::Utc::now(),
             });
         }
 
         let config: Config = serde_json::from_str(&contents)?;
         Ok(crate::models::StorageData {
+            version: 1,
             tasks: Vec::new(),
             categories: Vec::new(),
             config,
+            last_sync: chrono::Utc::now(),
         })
     }
 }
@@ -82,6 +88,7 @@ mod tests {
         let storage = ConfigStorage::new(config_path).unwrap();
 
         let data = crate::models::StorageData {
+            version: 1,
             tasks: vec![],
             categories: vec![],
             config: Config {
@@ -91,6 +98,7 @@ mod tests {
                 default_category: Some("work".to_string()),
                 default_priority: Some("medium".to_string()),
             },
+            last_sync: chrono::Utc::now(),
         };
 
         // Test save
