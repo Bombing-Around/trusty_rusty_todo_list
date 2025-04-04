@@ -7,8 +7,7 @@ pub mod json;
 pub mod sqlite;
 
 #[cfg(test)]
-mod test_utils {
-}
+mod test_utils {}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]

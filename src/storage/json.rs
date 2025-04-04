@@ -1,6 +1,6 @@
+use super::{Storage, StorageError};
 use crate::models::StorageData;
 use std::path::{Path, PathBuf};
-use super::{Storage, StorageError};
 
 pub struct JsonStorage {
     path: PathBuf,
