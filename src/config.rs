@@ -1,5 +1,5 @@
 use crate::models::StorageError;
-use crate::storage::{config::ConfigStorage, Storage};
+use crate::storage::{config::ConfigStorage, json::JsonStorage, sqlite, Storage};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -164,6 +164,8 @@ impl ConfigManager {
     pub fn new(config_path: Option<&Path>) -> Result<Self, ConfigError> {
         let config_path = if let Some(path) = config_path {
             path.to_path_buf()
+        } else if let Ok(path) = std::env::var("TRTODO_CONFIG") {
+            PathBuf::from(path)
         } else {
             let home = dirs::home_dir().expect("Could not determine home directory");
             home.join(".config")
@@ -179,6 +181,7 @@ impl ConfigManager {
             tasks: Vec::new(),
             categories: Vec::new(),
             config: crate::config::Config::default(),
+            current_category: None,
             last_sync: chrono::Utc::now(),
         };
         let config = data.config;
@@ -197,6 +200,7 @@ impl ConfigManager {
             tasks: Vec::new(),
             categories: Vec::new(),
             config: self.get_config().clone(),
+            current_category: None,
             last_sync: chrono::Utc::now(),
         };
         self.storage
@@ -347,6 +351,22 @@ impl ConfigManager {
                     .unwrap_or_default(),
             )
         })
+    }
+
+    pub fn get_storage(&self) -> Box<dyn Storage> {
+        let config = self.get_config();
+        let path = config.storage_path.as_ref().map_or_else(
+            || {
+                let home = dirs::home_dir().expect("Could not determine home directory");
+                home.join(".config").join("trtodo").join("data.json")
+            },
+            |p| PathBuf::from(shellexpand::tilde(p).to_string()),
+        );
+        match config.storage_type.as_deref().unwrap_or("json") {
+            "json" => Box::new(JsonStorage::new(path)),
+            "sqlite" => Box::new(sqlite::SqliteStorage::new(&path).expect("Failed to create SQLite storage")),
+            _ => Box::new(JsonStorage::new(path)), // Default to JSON storage
+        }
     }
 
     fn get_config(&self) -> Config {

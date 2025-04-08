@@ -287,6 +287,7 @@ impl Storage for SqliteStorage {
             tasks,
             categories,
             config: crate::config::Config::default(),
+            current_category: None,
             last_sync: Utc::now(),
         };
 

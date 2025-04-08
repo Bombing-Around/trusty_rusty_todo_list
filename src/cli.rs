@@ -181,6 +181,8 @@ pub enum ConfigCommands {
         /// Configuration key
         key: String,
     },
+    /// Reset the database to its initial state
+    Reset,
     /// List all configuration values
     List,
 }
@@ -313,6 +315,16 @@ mod tests {
                     assert_eq!(key_value, "storage.type=json");
                 }
                 _ => panic!("Expected Config Set command"),
+            },
+            _ => panic!("Expected Config command"),
+        }
+
+        // Test config reset
+        let cli = parse_args(&["trtodo", "config", "reset"]);
+        match cli.command {
+            Commands::Config { command } => match command {
+                ConfigCommands::Reset => {},
+                _ => panic!("Expected Config Reset command"),
             },
             _ => panic!("Expected Config command"),
         }

@@ -48,6 +48,7 @@ impl Storage for ConfigStorage {
                 tasks: Vec::new(),
                 categories: Vec::new(),
                 config: Config::default(),
+                current_category: None,
                 last_sync: chrono::Utc::now(),
             });
         }
@@ -61,6 +62,7 @@ impl Storage for ConfigStorage {
                 tasks: Vec::new(),
                 categories: Vec::new(),
                 config: Config::default(),
+                current_category: None,
                 last_sync: chrono::Utc::now(),
             });
         }
@@ -71,6 +73,7 @@ impl Storage for ConfigStorage {
             tasks: Vec::new(),
             categories: Vec::new(),
             config,
+            current_category: None,
             last_sync: chrono::Utc::now(),
         })
     }

@@ -98,6 +98,16 @@ pub enum TaskError {
     InvalidDueDate(String),
 }
 
+#[derive(Debug, Error)]
+pub enum CategoryError {
+    #[error("Category name cannot be empty")]
+    EmptyName,
+    #[error("Category already exists: {0}")]
+    DuplicateName(String),
+    #[error("Category not found: {0}")]
+    NotFound(String),
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Category {
     pub id: u64,
@@ -134,15 +144,6 @@ impl Category {
     pub fn set_order(&mut self, order: u32) {
         self.order = order;
     }
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Error)]
-pub enum CategoryError {
-    #[error("Category name cannot be empty")]
-    EmptyName,
-    #[error("Category name already exists: {0}")]
-    DuplicateName(String),
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
@@ -189,6 +190,7 @@ pub struct StorageData {
     pub tasks: Vec<Task>,
     pub categories: Vec<Category>,
     pub config: Config,
+    pub current_category: Option<u64>,
     pub last_sync: DateTime<Utc>,
 }
 
@@ -199,6 +201,7 @@ impl StorageData {
             tasks: Vec::new(),
             categories: Vec::new(),
             config: Config::default(),
+            current_category: None,
             last_sync: Utc::now(),
         }
     }
@@ -220,6 +223,18 @@ impl StorageData {
         }
 
         Ok(())
+    }
+}
+
+impl From<StorageError> for CategoryError {
+    fn from(error: StorageError) -> Self {
+        CategoryError::NotFound(error.to_string())
+    }
+}
+
+impl From<CategoryError> for StorageError {
+    fn from(error: CategoryError) -> Self {
+        StorageError::Model(error.to_string())
     }
 }
 
