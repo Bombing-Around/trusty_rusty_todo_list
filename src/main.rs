@@ -115,17 +115,33 @@ fn main() {
                     }
                 }
             },
-            CategoryCommands::Delete { name, new_category } => {
-                // First try to get category by name
-                let category = match category_manager.get_category_by_name(&name) {
-                    Ok(Some(c)) => c,
-                    Ok(None) => {
-                        eprintln!("Category '{}' not found", name);
-                        process::exit(1);
-                    },
-                    Err(e) => {
-                        eprintln!("Error finding category: {}", e);
-                        process::exit(1);
+            CategoryCommands::Delete { name_or_id, new_category } => {
+                // Try to get category by name or ID
+                let category = if let Ok(id) = name_or_id.parse::<u64>() {
+                    // Try to get by ID first
+                    match category_manager.get_category(id) {
+                        Ok(Some(c)) => c,
+                        Ok(None) => {
+                            eprintln!("Category with ID {} not found", id);
+                            process::exit(1);
+                        },
+                        Err(e) => {
+                            eprintln!("Error finding category: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                } else {
+                    // Try to get by name
+                    match category_manager.get_category_by_name(&name_or_id) {
+                        Ok(Some(c)) => c,
+                        Ok(None) => {
+                            eprintln!("Category '{}' not found", name_or_id);
+                            process::exit(1);
+                        },
+                        Err(e) => {
+                            eprintln!("Error finding category: {}", e);
+                            process::exit(1);
+                        }
                     }
                 };
 
@@ -147,7 +163,7 @@ fn main() {
                 };
 
                 match category_manager.delete_category(category.id, new_category_id) {
-                    Ok(_) => println!("Category '{}' deleted", name),
+                    Ok(_) => println!("Category '{}' deleted", category.name),
                     Err(e) => {
                         eprintln!("Failed to delete category: {}", e);
                         process::exit(1);

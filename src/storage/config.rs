@@ -101,6 +101,7 @@ mod tests {
                 default_category: Some("work".to_string()),
                 default_priority: Some("medium".to_string()),
             },
+            current_category: None,
             last_sync: chrono::Utc::now(),
         };
 

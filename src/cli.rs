@@ -152,8 +152,8 @@ pub enum CategoryCommands {
     },
     /// Delete a category
     Delete {
-        /// Name of the category
-        name: String,
+        /// Name or ID of the category
+        name_or_id: String,
         /// New category for tasks (optional)
         #[arg(short = 'n', long = "new-category")]
         new_category: Option<String>,

@@ -67,6 +67,7 @@ impl<'a> CategoryManager<'a> {
         // Clear current category context if it was deleted
         if self.current_category == Some(category_id) {
             self.current_category = None;
+            data.current_category = None;
         }
 
         self.storage.save(&data)
