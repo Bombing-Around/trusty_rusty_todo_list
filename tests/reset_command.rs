@@ -1,45 +1,32 @@
 use assert_cmd::Command;
 use tempfile::NamedTempFile;
-use trusty_rusty_todo_list::config::{Config, ConfigManager};
-use trusty_rusty_todo_list::models::StorageData;
-use trusty_rusty_todo_list::storage::{json::JsonStorage, Storage};
-
-fn setup_test_env() -> (ConfigManager, tempfile::TempDir) {
-    let temp_dir = tempfile::Builder::new()
-        .prefix("trtodo_test")
-        .tempdir()
-        .expect("Failed to create temporary directory");
-
-    let mut config = Config::default();
-    config.storage_path = Some(
-        temp_dir
-            .path()
-            .join("test-data.json")
-            .to_str()
-            .unwrap()
-            .to_string(),
-    );
-    config.storage_type = Some("json".to_string());
-    config.default_priority = Some("medium".to_string());
-
-    let storage = Box::new(JsonStorage::new(config).expect("Failed to create test storage"));
-
-    // Initialize with empty data
-    let data = StorageData::new();
-    storage
-        .save(&data)
-        .expect("Failed to initialize test storage");
-
-    let config_manager = ConfigManager::with_storage(storage);
-
-    (config_manager, temp_dir)
-}
 
 #[test]
 fn test_reset_command_rejected() {
-    let (_config_manager, _temp_dir) = setup_test_env();
+    // Create a temporary config file
+    let temp_file = NamedTempFile::new().unwrap();
+    let config_path = temp_file.path().to_str().unwrap();
+
+    // Generate a unique category name
+    let category_name = format!(
+        "TestCategory_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
+    // First add a category to have some data
+    let mut cmd = Command::cargo_bin("trusty_rusty_todo_list").unwrap();
+    cmd.env("TRTODO_CONFIG", config_path)
+        .args(["category", "add", &category_name])
+        .assert()
+        .success();
+
+    // Now try to reset but reject
     let mut cmd = Command::cargo_bin("trusty_rusty_todo_list").unwrap();
     let child = cmd
+        .env("TRTODO_CONFIG", config_path)
         .args(["config", "reset"])
         .timeout(std::time::Duration::from_secs(2))
         .write_stdin("n\n")
@@ -57,10 +44,19 @@ fn test_reset_command_accepted() {
     let temp_file = NamedTempFile::new().unwrap();
     let config_path = temp_file.path().to_str().unwrap();
 
+    // Generate a unique category name
+    let category_name = format!(
+        "TestCategory_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
     // First add a category to have some data
     let mut cmd = Command::cargo_bin("trusty_rusty_todo_list").unwrap();
     cmd.env("TRTODO_CONFIG", config_path)
-        .args(["category", "add", "TestCategory"])
+        .args(["category", "add", &category_name])
         .assert()
         .success();
 
@@ -92,5 +88,5 @@ fn test_reset_command_accepted() {
     let list_output = String::from_utf8(list_output).unwrap();
     assert!(list_output.contains("Home"));
     assert!(list_output.contains("Work"));
-    assert!(!list_output.contains("TestCategory"));
+    assert!(!list_output.contains(&category_name));
 }

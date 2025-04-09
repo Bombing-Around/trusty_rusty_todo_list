@@ -62,7 +62,14 @@ impl Storage for JsonStorage {
 
         let contents = std::fs::read_to_string(&self.path)?;
         if contents.trim().is_empty() {
-            return Ok(StorageData::new());
+            return Ok(StorageData {
+                version: 1,
+                tasks: Vec::new(),
+                categories: Vec::new(),
+                config: Config::with_defaults(),
+                current_category: None,
+                last_sync: Utc::now(),
+            });
         }
 
         let data: StorageData = serde_json::from_str(&contents)?;

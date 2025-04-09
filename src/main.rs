@@ -14,7 +14,11 @@ use std::process;
 fn initialize_default_categories(
     storage: &dyn storage::Storage,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut data = storage.load()?;
+    let mut data = match storage.load() {
+        Ok(data) => data,
+        Err(_) => crate::models::StorageData::new(),
+    };
+
     if data.categories.is_empty() {
         // Add default categories
         let mut home = Category::new("Home".to_string(), Some("Home tasks".to_string()))?;
