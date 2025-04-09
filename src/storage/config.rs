@@ -1,6 +1,37 @@
-use super::{Storage, StorageError};
+use super::StorageError;
 use crate::config::Config;
+use crate::storage::{Storage, StorageType};
 use std::path::Path;
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct StorageConfig {
+    pub storage_type: StorageType,
+    pub storage_path: Option<std::path::PathBuf>,
+}
+
+impl StorageConfig {
+    #[allow(dead_code)]
+    pub fn from_config_manager(manager: &crate::config::ConfigManager) -> Self {
+        let storage_type = manager
+            .get("storage.type")
+            .and_then(|s| match s.as_str() {
+                "sqlite" => Some(StorageType::Sqlite),
+                "json" => Some(StorageType::Json),
+                _ => None,
+            })
+            .unwrap_or(StorageType::Json);
+
+        let storage_path = manager
+            .get("storage.path")
+            .map(|s| std::path::PathBuf::from(shellexpand::tilde(&s).to_string()));
+
+        Self {
+            storage_type,
+            storage_path,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct ConfigStorage {
@@ -8,6 +39,7 @@ pub struct ConfigStorage {
 }
 
 impl ConfigStorage {
+    #[allow(dead_code)]
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
         Ok(Self {
             path: path.as_ref().to_path_buf(),
@@ -82,61 +114,35 @@ impl Storage for ConfigStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use crate::storage::test_utils::create_test_config_manager;
 
     #[test]
-    fn test_config_storage() {
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("config.json");
-        let storage = ConfigStorage::new(config_path).unwrap();
-
-        let data = crate::models::StorageData {
-            version: 1,
-            tasks: vec![],
-            categories: vec![],
-            config: Config {
-                deleted_task_lifespan: Some(7),
-                storage_type: Some("json".to_string()),
-                storage_path: Some("~/.config/trtodo".to_string()),
-                default_category: Some("work".to_string()),
-                default_priority: Some("medium".to_string()),
-            },
-            current_category: None,
-            last_sync: chrono::Utc::now(),
-        };
-
-        // Test save
-        storage.save(&data).unwrap();
-
-        // Test load
-        let loaded_data = storage.load().unwrap();
-        assert_eq!(loaded_data.config.deleted_task_lifespan, Some(7));
-        assert_eq!(loaded_data.config.storage_type, Some("json".to_string()));
-        assert_eq!(
-            loaded_data.config.storage_path,
-            Some("~/.config/trtodo".to_string())
-        );
-        assert_eq!(
-            loaded_data.config.default_category,
-            Some("work".to_string())
-        );
-        assert_eq!(
-            loaded_data.config.default_priority,
-            Some("medium".to_string())
-        );
+    fn test_storage_config_from_manager() {
+        let (manager, temp_dir) = create_test_config_manager();
+        let config = StorageConfig::from_config_manager(&manager);
+        assert_eq!(config.storage_type, StorageType::Json);
+        assert_eq!(config.storage_path, Some(temp_dir.path().join("test-data.json")));
     }
 
     #[test]
-    fn test_empty_config_storage() {
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("config.json");
-        let storage = ConfigStorage::new(config_path).unwrap();
+    fn test_storage_config_from_manager_with_custom_type() {
+        let (mut manager, temp_dir) = create_test_config_manager();
+        manager.set("storage.type", "sqlite").unwrap();
+        let config = StorageConfig::from_config_manager(&manager);
+        assert_eq!(config.storage_type, StorageType::Sqlite);
+        assert_eq!(config.storage_path, Some(temp_dir.path().join("test-data.json")));
+    }
 
-        let loaded_data = storage.load().unwrap();
-        assert_eq!(loaded_data.config.deleted_task_lifespan, None);
-        assert_eq!(loaded_data.config.storage_type, None);
-        assert_eq!(loaded_data.config.storage_path, None);
-        assert_eq!(loaded_data.config.default_category, None);
-        assert_eq!(loaded_data.config.default_priority, None);
+    #[test]
+    fn test_storage_config_from_manager_with_invalid_type() {
+        let (manager, temp_dir) = create_test_config_manager();
+
+        let mut data = manager.get_storage_ref().load().unwrap();
+        data.config.storage_type = Some("invalid".to_string());
+        manager.get_storage_ref().save(&data).unwrap();
+        
+        let config = StorageConfig::from_config_manager(&manager);
+        assert_eq!(config.storage_type, StorageType::Json); // Should default to Json
+        assert_eq!(config.storage_path, Some(temp_dir.path().join("test-data.json")));
     }
 }

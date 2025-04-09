@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "tasks": [],
+  "categories": [],
+  "config": {
+    "deleted_task_lifespan": 7,
+    "storage_type": "json",
+    "storage_path": "~/.config/trtodo",
+    "default_category": "work",
+    "default_priority": "medium"
+  },
+  "current_category": null,
+  "last_sync": "2025-04-09T01:45:13.139033904Z"
+}

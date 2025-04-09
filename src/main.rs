@@ -22,6 +22,10 @@ fn initialize_default_categories(storage: &dyn storage::Storage) -> Result<(), B
         home.id = 1;
         work.id = 2;
         
+        // Set order to match IDs
+        home.set_order(1);
+        work.set_order(2);
+        
         data.categories.push(home);
         data.categories.push(work);
         storage.save(&data)?;
@@ -197,8 +201,11 @@ fn main() {
                     Ok(categories) => {
                         println!("Categories:");
                         for category in categories {
-                            println!("{}: {} {}", category.id, category.name, 
-                                if Some(category.id) == category_manager.get_current_category() {
+                            let is_current = Some(category.id) == category_manager.get_current_category();
+                            println!("{}: {} {}", 
+                                category.id, 
+                                category.name, 
+                                if is_current {
                                     "(current)"
                                 } else {
                                     ""
@@ -208,6 +215,65 @@ fn main() {
                     },
                     Err(e) => {
                         eprintln!("Failed to list categories: {}", e);
+                        process::exit(1);
+                    }
+                }
+            },
+            CategoryCommands::Order { category, position } => {
+                // Try to get category by name first
+                let category_id = match category_manager.get_category_by_name(&category) {
+                    Ok(Some(c)) => c.id,
+                    Ok(None) => {
+                        // If not found by name, try parsing as ID
+                        match category.parse::<u64>() {
+                            Ok(id) => id,
+                            Err(_) => {
+                                eprintln!("Category '{}' not found", category);
+                                process::exit(1);
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Error finding category: {}", e);
+                        process::exit(1);
+                    }
+                };
+
+                match category_manager.set_category_order(category_id, position) {
+                    Ok(_) => println!("Category order updated successfully"),
+                    Err(e) => {
+                        eprintln!("Failed to update category order: {}", e);
+                        process::exit(1);
+                    }
+                }
+            },
+            CategoryCommands::Reorder { categories } => {
+                // Convert category names/IDs to category IDs
+                let mut category_ids = Vec::new();
+                for category in categories {
+                    match category_manager.get_category_by_name(&category) {
+                        Ok(Some(c)) => category_ids.push(c.id),
+                        Ok(None) => {
+                            // Try parsing as ID
+                            match category.parse::<u64>() {
+                                Ok(id) => category_ids.push(id),
+                                Err(_) => {
+                                    eprintln!("Category '{}' not found", category);
+                                    process::exit(1);
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            eprintln!("Error finding category: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+
+                match category_manager.reorder_categories(category_ids) {
+                    Ok(_) => println!("Categories reordered successfully"),
+                    Err(e) => {
+                        eprintln!("Failed to reorder categories: {}", e);
                         process::exit(1);
                     }
                 }
@@ -264,17 +330,27 @@ fn main() {
             },
             CategoryCommands::Show => {
                 match category_manager.get_current_category() {
-                    Some(id) => {
-                        match category_manager.get_category(id) {
-                            Ok(Some(category)) => println!("Current category: {}", category.name),
-                            Ok(None) => println!("Current category ID {} not found", id),
-                            Err(e) => {
-                                eprintln!("Error getting current category: {}", e);
-                                process::exit(1);
+                    Some(category_id) => {
+                        if category_id == 0 {
+                            println!("Current category: Uncategorized (ID: 0)");
+                        } else {
+                            match category_manager.get_category(category_id) {
+                                Ok(Some(category)) => {
+                                    println!("Current category: {} (ID: {})", category.name, category.id);
+                                },
+                                Ok(None) => {
+                                    println!("Current category: Unknown (ID: {})", category_id);
+                                },
+                                Err(e) => {
+                                    eprintln!("Error getting category: {}", e);
+                                    process::exit(1);
+                                }
                             }
                         }
                     },
-                    None => println!("No category context set")
+                    None => {
+                        println!("No category selected (using Uncategorized)");
+                    }
                 }
             },
         },

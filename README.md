@@ -39,6 +39,8 @@ The binary named `trtodo` will accept various arguments
 | `trtodo category delete <name> (--new-category <category_name or category_id>)`                       | Delete a category and optionally move its tasks                                                                                           |
 | `trtodo category update <old_name> <new_name>`                                                        | Update an existing category with the given name                                                                                           |
 | `trtodo category list`                                                                                | List all categories with their IDs                                                                                                        |
+| `trtodo category order <category_name or id> <position>`                                             | Set the order position of a category (0-based)                                                                                            |
+| `trtodo category reorder <category1> <category2> ...`                                                | Reorder multiple categories by providing them in the desired order                                                                        |
 | `trtodo config set <key=value>`                                                                       | Set configuration key to value                                                                                                            |
 | `trtodo config reset`                                                                                 | Reset the database to its initial state (requires confirmation). This will delete all tasks and categories and restore default categories |
 | `trtodo config default <key>`                                                                         | Unsets the value for key to force use of the default value                                                                                |
@@ -59,6 +61,8 @@ When deleting an item it will be _soft_deleted_ and placed under a hidden magic 
 When deleting a category it is removed and its ID is made available again. All associated tasks are moved to the top unless a new category is provided.
 
 Category context (set via `category use`) persists between runs of the application. When in a category context, commands that require category specification can omit the `--category` argument.
+
+Categories are ordered by their ID by default when created. You can change this order using the `category order` and `category reorder` commands. The order is preserved between runs and affects how categories are displayed in the `category list` command.
 
 ## Configuration Values
 

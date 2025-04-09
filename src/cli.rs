@@ -139,6 +139,7 @@ pub enum CategoryCommands {
     /// Set current category context
     Use {
         /// Category name or ID
+        #[arg(help = "Category name or ID (e.g. 'Home' or '1')")]
         category: String,
     },
     /// Clear current category context
@@ -153,20 +154,37 @@ pub enum CategoryCommands {
     /// Delete a category
     Delete {
         /// Name or ID of the category
+        #[arg(help = "Category name or ID (e.g. 'Home' or '1')")]
         name_or_id: String,
         /// New category for tasks (optional)
-        #[arg(short = 'n', long = "new-category")]
+        #[arg(short = 'n', long = "new-category", help = "Category name or ID to move tasks to")]
         new_category: Option<String>,
     },
     /// Update a category name
     Update {
-        /// Old category name
+        /// Old category name or ID
+        #[arg(help = "Category name or ID to rename")]
         old_name: String,
         /// New category name
         new_name: String,
     },
     /// List all categories
     List,
+    /// Set the order of a category
+    Order {
+        /// Category name or ID to reorder
+        #[arg(help = "Category name or ID to set order for")]
+        category: String,
+        /// New order position (0-based)
+        #[arg(help = "New position in the order (0-based)")]
+        position: u32,
+    },
+    /// Reorder multiple categories
+    Reorder {
+        /// List of category names or IDs in desired order
+        #[arg(help = "Space-separated list of category names or IDs in desired order")]
+        categories: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
