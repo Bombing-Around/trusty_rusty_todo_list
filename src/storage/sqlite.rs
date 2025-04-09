@@ -1,11 +1,11 @@
-use crate::models::{Category, Priority, StorageData, Task};
+use super::{Storage, StorageError};
 use crate::config::Config;
+use crate::models::{Category, Priority, StorageData, Task};
+use chrono::Utc;
 use rusqlite::{params, Connection};
+use shellexpand;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use chrono::Utc;
-use super::{Storage, StorageError};
-use shellexpand;
 
 #[allow(dead_code)]
 const SCHEMA_VERSION: i32 = 1;
@@ -48,7 +48,8 @@ pub struct SqliteStorage {
 
 impl SqliteStorage {
     pub fn new(config: Config) -> Result<Self, StorageError> {
-        let path = config.storage_path
+        let path = config
+            .storage_path
             .ok_or_else(|| StorageError::Storage("Storage path not configured".to_string()))?;
         let path = PathBuf::from(shellexpand::tilde(&path).to_string());
         let conn = Connection::open(&path)
@@ -110,7 +111,9 @@ impl SqliteStorage {
             )",
             [],
         )
-        .map_err(|e| StorageError::Storage(format!("Failed to create current_category table: {}", e)))?;
+        .map_err(|e| {
+            StorageError::Storage(format!("Failed to create current_category table: {}", e))
+        })?;
 
         Ok(())
     }
@@ -269,11 +272,9 @@ impl SqliteStorage {
             })?;
 
         if let Some(row) = rows.next() {
-            Ok(Some(
-                row.map_err(|e| {
-                    StorageError::Storage(format!("Failed to read current_category: {}", e))
-                })?,
-            ))
+            Ok(Some(row.map_err(|e| {
+                StorageError::Storage(format!("Failed to read current_category: {}", e))
+            })?))
         } else {
             Ok(None)
         }

@@ -1,9 +1,9 @@
 use super::{Storage, StorageError};
-use crate::models::StorageData;
 use crate::config::Config;
-use std::path::PathBuf;
+use crate::models::StorageData;
 use chrono::Utc;
 use shellexpand;
+use std::path::PathBuf;
 
 pub struct JsonStorage {
     path: PathBuf,
@@ -11,12 +11,11 @@ pub struct JsonStorage {
 
 impl JsonStorage {
     pub fn new(config: Config) -> Result<Self, StorageError> {
-        let path = config.storage_path
+        let path = config
+            .storage_path
             .ok_or_else(|| StorageError::Storage("Storage path not configured".to_string()))?;
         let path = PathBuf::from(shellexpand::tilde(&path).to_string());
-        Ok(Self {
-            path,
-        })
+        Ok(Self { path })
     }
 }
 
@@ -94,10 +93,10 @@ mod tests {
             .tempdir()
             .expect("Failed to create temporary directory");
         let storage_path = temp_dir.path().join("test_custom.json");
-        
+
         let mut config = Config::default();
         config.storage_path = Some(storage_path.to_str().unwrap().to_string());
-        
+
         let storage = JsonStorage::new(config).expect("Failed to create storage");
         assert!(storage.load().is_ok());
     }

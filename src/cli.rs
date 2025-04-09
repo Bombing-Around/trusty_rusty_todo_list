@@ -157,7 +157,11 @@ pub enum CategoryCommands {
         #[arg(help = "Category name or ID (e.g. 'Home' or '1')")]
         name_or_id: String,
         /// New category for tasks (optional)
-        #[arg(short = 'n', long = "new-category", help = "Category name or ID to move tasks to")]
+        #[arg(
+            short = 'n',
+            long = "new-category",
+            help = "Category name or ID to move tasks to"
+        )]
         new_category: Option<String>,
     },
     /// Update a category name
@@ -341,7 +345,7 @@ mod tests {
         let cli = parse_args(&["trtodo", "config", "reset"]);
         match cli.command {
             Commands::Config { command } => match command {
-                ConfigCommands::Reset => {},
+                ConfigCommands::Reset => {}
                 _ => panic!("Expected Config Reset command"),
             },
             _ => panic!("Expected Config command"),

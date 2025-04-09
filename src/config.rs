@@ -194,7 +194,7 @@ impl ConfigManager {
 
         let mut config = Config::default();
         config.storage_path = Some(path.to_str().unwrap().to_string());
-        
+
         let storage = Box::new(JsonStorage::new(config)?);
         let mut config_manager = Self {
             storage,
@@ -203,9 +203,15 @@ impl ConfigManager {
 
         // Initialize with default values if this is a new config
         if !path.exists() {
-            config_manager.set("deleted-task-lifespan", "0").map_err(|e| StorageError::Storage(e.to_string()))?;
-            config_manager.set("storage.type", "json").map_err(|e| StorageError::Storage(e.to_string()))?;
-            config_manager.set("default-priority", "medium").map_err(|e| StorageError::Storage(e.to_string()))?;
+            config_manager
+                .set("deleted-task-lifespan", "0")
+                .map_err(|e| StorageError::Storage(e.to_string()))?;
+            config_manager
+                .set("storage.type", "json")
+                .map_err(|e| StorageError::Storage(e.to_string()))?;
+            config_manager
+                .set("default-priority", "medium")
+                .map_err(|e| StorageError::Storage(e.to_string()))?;
         }
 
         Ok(config_manager)
@@ -217,12 +223,15 @@ impl ConfigManager {
             storage,
             old_storage_type: None,
         };
-        
+
         // Initialize with default values
         let mut data = config_manager.storage.load().unwrap();
         data.config = Config::with_defaults();
-        config_manager.storage.save(&data).expect("Failed to initialize storage");
-        
+        config_manager
+            .storage
+            .save(&data)
+            .expect("Failed to initialize storage");
+
         config_manager
     }
 
@@ -316,7 +325,7 @@ impl ConfigManager {
     pub fn list(&self) -> Vec<(String, String, bool)> {
         let mut list = Vec::new();
         let defaults = Config::with_defaults();
-        
+
         // Add storage type
         list.push((
             "storage.type".to_string(),
@@ -334,14 +343,19 @@ impl ConfigManager {
         // Add deleted task lifespan
         list.push((
             "deleted-task-lifespan".to_string(),
-            defaults.deleted_task_lifespan.map(|v| v.to_string()).unwrap_or_else(|| "null".to_string()),
+            defaults
+                .deleted_task_lifespan
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "null".to_string()),
             true,
         ));
 
         // Add default priority
         list.push((
             "default-priority".to_string(),
-            defaults.default_priority.unwrap_or_else(|| "null".to_string()),
+            defaults
+                .default_priority
+                .unwrap_or_else(|| "null".to_string()),
             true,
         ));
 
@@ -349,7 +363,11 @@ impl ConfigManager {
         if let Ok(data) = self.storage.load() {
             let config = data.config;
             if let Some(value) = config.deleted_task_lifespan {
-                list.push(("deleted-task-lifespan".to_string(), value.to_string(), false));
+                list.push((
+                    "deleted-task-lifespan".to_string(),
+                    value.to_string(),
+                    false,
+                ));
             }
             if let Some(value) = config.storage_type {
                 list.push(("storage.type".to_string(), value, false));
@@ -401,11 +419,11 @@ impl ConfigManager {
             .get("storage.path")
             .ok_or_else(|| StorageError::Storage("Storage path not configured".to_string()))?;
         let path = PathBuf::from(shellexpand::tilde(&path).to_string());
-        
+
         let mut config = Config::default();
         config.storage_path = Some(path.to_str().unwrap().to_string());
         config.storage_type = self.get("storage.type");
-        
+
         match config.storage_type.as_deref().unwrap_or("json") {
             "json" => {
                 let storage = JsonStorage::new(config)?;
@@ -489,26 +507,38 @@ mod tests {
         let (manager, _temp_dir) = create_test_config_manager();
         let list = manager.list();
         assert!(!list.is_empty());
-        
+
         // Check that default values are present
         let has_storage_type = list.iter().any(|(key, value, is_default)| {
             key == "storage.type" && (value == "json" || value == "null") && *is_default
         });
-        assert!(has_storage_type, "storage.type should be present with default value");
+        assert!(
+            has_storage_type,
+            "storage.type should be present with default value"
+        );
 
         let has_storage_path = list.iter().any(|(key, value, is_default)| {
             key == "storage.path" && (value.contains("data.json") || value == "null") && *is_default
         });
-        assert!(has_storage_path, "storage.path should be present with default value");
+        assert!(
+            has_storage_path,
+            "storage.path should be present with default value"
+        );
 
         let has_deleted_task_lifespan = list.iter().any(|(key, value, is_default)| {
             key == "deleted-task-lifespan" && (value == "0" || value == "null") && *is_default
         });
-        assert!(has_deleted_task_lifespan, "deleted-task-lifespan should be present with default value");
+        assert!(
+            has_deleted_task_lifespan,
+            "deleted-task-lifespan should be present with default value"
+        );
 
         let has_default_priority = list.iter().any(|(key, value, is_default)| {
             key == "default-priority" && (value == "medium" || value == "null") && *is_default
         });
-        assert!(has_default_priority, "default-priority should be present with default value");
+        assert!(
+            has_default_priority,
+            "default-priority should be present with default value"
+        );
     }
 }

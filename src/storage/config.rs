@@ -121,7 +121,10 @@ mod tests {
         let (manager, temp_dir) = create_test_config_manager();
         let config = StorageConfig::from_config_manager(&manager);
         assert_eq!(config.storage_type, StorageType::Json);
-        assert_eq!(config.storage_path, Some(temp_dir.path().join("test-data.json")));
+        assert_eq!(
+            config.storage_path,
+            Some(temp_dir.path().join("test-data.json"))
+        );
     }
 
     #[test]
@@ -130,7 +133,10 @@ mod tests {
         manager.set("storage.type", "sqlite").unwrap();
         let config = StorageConfig::from_config_manager(&manager);
         assert_eq!(config.storage_type, StorageType::Sqlite);
-        assert_eq!(config.storage_path, Some(temp_dir.path().join("test-data.json")));
+        assert_eq!(
+            config.storage_path,
+            Some(temp_dir.path().join("test-data.json"))
+        );
     }
 
     #[test]
@@ -140,9 +146,12 @@ mod tests {
         let mut data = manager.get_storage_ref().load().unwrap();
         data.config.storage_type = Some("invalid".to_string());
         manager.get_storage_ref().save(&data).unwrap();
-        
+
         let config = StorageConfig::from_config_manager(&manager);
         assert_eq!(config.storage_type, StorageType::Json); // Should default to Json
-        assert_eq!(config.storage_path, Some(temp_dir.path().join("test-data.json")));
+        assert_eq!(
+            config.storage_path,
+            Some(temp_dir.path().join("test-data.json"))
+        );
     }
 }

@@ -4,28 +4,30 @@ mod config;
 mod models;
 mod storage;
 
-use clap::Parser;
-use cli::{Cli, Commands, ConfigCommands, CategoryCommands};
-use config::ConfigManager;
-use category_manager::CategoryManager;
 use crate::models::Category;
+use category_manager::CategoryManager;
+use clap::Parser;
+use cli::{CategoryCommands, Cli, Commands, ConfigCommands};
+use config::ConfigManager;
 use std::process;
 
-fn initialize_default_categories(storage: &dyn storage::Storage) -> Result<(), Box<dyn std::error::Error>> {
+fn initialize_default_categories(
+    storage: &dyn storage::Storage,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut data = storage.load()?;
     if data.categories.is_empty() {
         // Add default categories
         let mut home = Category::new("Home".to_string(), Some("Home tasks".to_string()))?;
         let mut work = Category::new("Work".to_string(), Some("Work tasks".to_string()))?;
-        
+
         // Set IDs for default categories
         home.id = 1;
         work.id = 2;
-        
+
         // Set order to match IDs
         home.set_order(1);
         work.set_order(2);
-        
+
         data.categories.push(home);
         data.categories.push(work);
         storage.save(&data)?;
@@ -39,7 +41,7 @@ fn main() {
     // Initialize config manager
     let mut config_manager = ConfigManager::new(None).expect("Failed to initialize config manager");
     let storage = config_manager.get_storage();
-    
+
     // Initialize default categories on first run
     if let Err(e) = initialize_default_categories(&*storage) {
         eprintln!("Failed to initialize default categories: {}", e);
@@ -71,9 +73,11 @@ fn main() {
             }
             ConfigCommands::Reset => {
                 println!("Warning: This will delete all tasks and categories.");
-                println!("The database will be reset to its initial state with default categories.");
+                println!(
+                    "The database will be reset to its initial state with default categories."
+                );
                 println!("Are you sure you want to continue? [y/N]");
-                
+
                 let mut input = String::new();
                 if std::io::stdin().read_line(&mut input).is_err() {
                     eprintln!("Failed to read input");
@@ -87,19 +91,19 @@ fn main() {
 
                 // Create a fresh empty data state
                 let data = crate::models::StorageData::new();
-                
+
                 // Save the empty data state
                 if let Err(e) = storage.save(&data) {
                     eprintln!("Failed to reset database: {}", e);
                     std::process::exit(1);
                 }
-                
+
                 // Reinitialize with default categories
                 if let Err(e) = initialize_default_categories(&*storage) {
                     eprintln!("Failed to initialize default categories: {}", e);
                     std::process::exit(1);
                 }
-                
+
                 println!("Database has been reset to initial state with default categories");
             }
             ConfigCommands::List => {
@@ -118,8 +122,11 @@ fn main() {
                         process::exit(1);
                     }
                 }
-            },
-            CategoryCommands::Delete { name_or_id, new_category } => {
+            }
+            CategoryCommands::Delete {
+                name_or_id,
+                new_category,
+            } => {
                 // Try to get category by name or ID
                 let category = if let Ok(id) = name_or_id.parse::<u64>() {
                     // Try to get by ID first
@@ -128,7 +135,7 @@ fn main() {
                         Ok(None) => {
                             eprintln!("Category with ID {} not found", id);
                             process::exit(1);
-                        },
+                        }
                         Err(e) => {
                             eprintln!("Error finding category: {}", e);
                             process::exit(1);
@@ -141,7 +148,7 @@ fn main() {
                         Ok(None) => {
                             eprintln!("Category '{}' not found", name_or_id);
                             process::exit(1);
-                        },
+                        }
                         Err(e) => {
                             eprintln!("Error finding category: {}", e);
                             process::exit(1);
@@ -156,7 +163,7 @@ fn main() {
                         Ok(None) => {
                             eprintln!("New category '{}' not found", new_cat);
                             process::exit(1);
-                        },
+                        }
                         Err(e) => {
                             eprintln!("Error finding new category: {}", e);
                             process::exit(1);
@@ -173,7 +180,7 @@ fn main() {
                         process::exit(1);
                     }
                 }
-            },
+            }
             CategoryCommands::Update { old_name, new_name } => {
                 // First try to get category by name
                 let category = match category_manager.get_category_by_name(&old_name) {
@@ -181,7 +188,7 @@ fn main() {
                     Ok(None) => {
                         eprintln!("Category '{}' not found", old_name);
                         process::exit(1);
-                    },
+                    }
                     Err(e) => {
                         eprintln!("Error finding category: {}", e);
                         process::exit(1);
@@ -195,28 +202,24 @@ fn main() {
                         process::exit(1);
                     }
                 }
-            },
-            CategoryCommands::List => {
-                match category_manager.list_categories() {
-                    Ok(categories) => {
-                        println!("Categories:");
-                        for category in categories {
-                            let is_current = Some(category.id) == category_manager.get_current_category();
-                            println!("{}: {} {}", 
-                                category.id, 
-                                category.name, 
-                                if is_current {
-                                    "(current)"
-                                } else {
-                                    ""
-                                }
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!("Failed to list categories: {}", e);
-                        process::exit(1);
+            }
+            CategoryCommands::List => match category_manager.list_categories() {
+                Ok(categories) => {
+                    println!("Categories:");
+                    for category in categories {
+                        let is_current =
+                            Some(category.id) == category_manager.get_current_category();
+                        println!(
+                            "{}: {} {}",
+                            category.id,
+                            category.name,
+                            if is_current { "(current)" } else { "" }
+                        );
                     }
+                }
+                Err(e) => {
+                    eprintln!("Failed to list categories: {}", e);
+                    process::exit(1);
                 }
             },
             CategoryCommands::Order { category, position } => {
@@ -232,7 +235,7 @@ fn main() {
                                 process::exit(1);
                             }
                         }
-                    },
+                    }
                     Err(e) => {
                         eprintln!("Error finding category: {}", e);
                         process::exit(1);
@@ -246,7 +249,7 @@ fn main() {
                         process::exit(1);
                     }
                 }
-            },
+            }
             CategoryCommands::Reorder { categories } => {
                 // Convert category names/IDs to category IDs
                 let mut category_ids = Vec::new();
@@ -262,7 +265,7 @@ fn main() {
                                     process::exit(1);
                                 }
                             }
-                        },
+                        }
                         Err(e) => {
                             eprintln!("Error finding category: {}", e);
                             process::exit(1);
@@ -277,7 +280,7 @@ fn main() {
                         process::exit(1);
                     }
                 }
-            },
+            }
             CategoryCommands::Use { category } => {
                 // Try to get category by name first
                 let category_id = match category_manager.get_category_by_name(&category) {
@@ -291,7 +294,7 @@ fn main() {
                                 process::exit(1);
                             }
                         }
-                    },
+                    }
                     Err(e) => {
                         eprintln!("Error finding category: {}", e);
                         process::exit(1);
@@ -304,7 +307,7 @@ fn main() {
                     Ok(None) => {
                         eprintln!("Category with ID {} not found", category_id);
                         process::exit(1);
-                    },
+                    }
                     Err(e) => {
                         eprintln!("Error finding category: {}", e);
                         process::exit(1);
@@ -318,7 +321,7 @@ fn main() {
                         process::exit(1);
                     }
                 }
-            },
+            }
             CategoryCommands::Clear => {
                 match category_manager.clear_category_context() {
                     Ok(_) => println!("Category context cleared"),
@@ -327,30 +330,31 @@ fn main() {
                         process::exit(1);
                     }
                 };
-            },
-            CategoryCommands::Show => {
-                match category_manager.get_current_category() {
-                    Some(category_id) => {
-                        if category_id == 0 {
-                            println!("Current category: Uncategorized (ID: 0)");
-                        } else {
-                            match category_manager.get_category(category_id) {
-                                Ok(Some(category)) => {
-                                    println!("Current category: {} (ID: {})", category.name, category.id);
-                                },
-                                Ok(None) => {
-                                    println!("Current category: Unknown (ID: {})", category_id);
-                                },
-                                Err(e) => {
-                                    eprintln!("Error getting category: {}", e);
-                                    process::exit(1);
-                                }
+            }
+            CategoryCommands::Show => match category_manager.get_current_category() {
+                Some(category_id) => {
+                    if category_id == 0 {
+                        println!("Current category: Uncategorized (ID: 0)");
+                    } else {
+                        match category_manager.get_category(category_id) {
+                            Ok(Some(category)) => {
+                                println!(
+                                    "Current category: {} (ID: {})",
+                                    category.name, category.id
+                                );
+                            }
+                            Ok(None) => {
+                                println!("Current category: Unknown (ID: {})", category_id);
+                            }
+                            Err(e) => {
+                                eprintln!("Error getting category: {}", e);
+                                process::exit(1);
                             }
                         }
-                    },
-                    None => {
-                        println!("No category selected (using Uncategorized)");
                     }
+                }
+                None => {
+                    println!("No category selected (using Uncategorized)");
                 }
             },
         },

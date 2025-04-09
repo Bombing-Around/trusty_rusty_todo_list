@@ -133,7 +133,7 @@ pub trait Storage {
         let data = self.load()?;
         let mut used_ids: Vec<u64> = data.categories.iter().map(|c| c.id).collect();
         used_ids.sort();
-        
+
         // Find first available ID
         let mut next_id = 1;
         for id in used_ids {
@@ -142,7 +142,7 @@ pub trait Storage {
             }
             next_id = id + 1;
         }
-        
+
         Ok(next_id)
     }
 
@@ -294,7 +294,7 @@ pub trait Storage {
 pub fn create_storage(path: &Path) -> Result<Box<dyn Storage>, StorageError> {
     let mut config = crate::config::Config::default();
     config.storage_path = Some(path.to_str().unwrap().to_string());
-    
+
     match config.storage_type.as_deref().unwrap_or("json") {
         "json" => {
             let storage = json::JsonStorage::new(config)?;
@@ -334,11 +334,11 @@ mod tests {
     fn test_storage_manager_sqlite() {
         let (_manager, _temp_dir) = create_test_config_manager();
         let storage = create_storage(Path::new("test.db")).unwrap();
-        
+
         // Initialize with empty data
         let data = StorageData::new();
         storage.save(&data).expect("Failed to initialize storage");
-        
+
         assert!(storage.load().is_ok());
     }
 }
