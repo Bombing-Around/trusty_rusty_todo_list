@@ -1,6 +1,7 @@
 use crate::config::Config;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use thiserror::Error;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -98,6 +99,16 @@ pub enum TaskError {
     InvalidDueDate(String),
 }
 
+#[derive(Debug, Error)]
+pub enum CategoryError {
+    #[error("Category name cannot be empty")]
+    EmptyName,
+    #[error("Category already exists: {0}")]
+    DuplicateName(String),
+    #[error("Category not found: {0}")]
+    NotFound(String),
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Category {
     pub id: u64,
@@ -136,43 +147,24 @@ impl Category {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Error)]
-pub enum CategoryError {
-    #[error("Category name cannot be empty")]
-    EmptyName,
-    #[error("Category name already exists: {0}")]
-    DuplicateName(String),
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub enum Priority {
     High,
+    #[default]
     Medium,
     Low,
 }
 
-#[allow(dead_code)]
-impl Priority {
-    pub fn from_str(s: &str) -> Result<Self, PriorityError> {
+impl FromStr for Priority {
+    type Err = PriorityError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "high" => Ok(Priority::High),
             "medium" => Ok(Priority::Medium),
             "low" => Ok(Priority::Low),
             _ => Err(PriorityError::InvalidPriority(s.to_string())),
         }
-    }
-
-    pub fn to_str(self) -> &'static str {
-        match self {
-            Priority::High => "high",
-            Priority::Medium => "medium",
-            Priority::Low => "low",
-        }
-    }
-
-    pub fn default() -> Self {
-        Priority::Medium
     }
 }
 
@@ -189,6 +181,7 @@ pub struct StorageData {
     pub tasks: Vec<Task>,
     pub categories: Vec<Category>,
     pub config: Config,
+    pub current_category: Option<u64>,
     pub last_sync: DateTime<Utc>,
 }
 
@@ -199,6 +192,7 @@ impl StorageData {
             tasks: Vec::new(),
             categories: Vec::new(),
             config: Config::default(),
+            current_category: None,
             last_sync: Utc::now(),
         }
     }
@@ -220,6 +214,24 @@ impl StorageData {
         }
 
         Ok(())
+    }
+}
+
+impl From<StorageError> for CategoryError {
+    fn from(error: StorageError) -> Self {
+        CategoryError::NotFound(error.to_string())
+    }
+}
+
+impl From<CategoryError> for StorageError {
+    fn from(error: CategoryError) -> Self {
+        StorageError::Model(error.to_string())
+    }
+}
+
+impl Default for StorageData {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -1,16 +1,13 @@
 use crate::models::{Category, Priority, StorageData, StorageError, Task};
-use std::boxed::Box;
 use std::path::Path;
 
 pub mod config;
 pub mod json;
 pub mod sqlite;
-
-#[cfg(test)]
-mod test_utils {}
+pub mod test_utils;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StorageType {
     Json,
     Sqlite,
@@ -134,7 +131,19 @@ pub trait Storage {
 
     fn get_next_category_id(&self) -> Result<u64, StorageError> {
         let data = self.load()?;
-        Ok(data.categories.iter().map(|c| c.id).max().unwrap_or(0) + 1)
+        let mut used_ids: Vec<u64> = data.categories.iter().map(|c| c.id).collect();
+        used_ids.sort();
+
+        // Find first available ID
+        let mut next_id = 1;
+        for id in used_ids {
+            if id > next_id {
+                break;
+            }
+            next_id = id + 1;
+        }
+
+        Ok(next_id)
     }
 
     // Additional convenience methods for README behaviors
@@ -282,17 +291,23 @@ pub trait Storage {
 }
 
 #[allow(dead_code)]
-pub fn create_storage(
-    storage_type: StorageType,
-    path: &Path,
-) -> Result<Box<dyn Storage>, StorageError> {
-    match storage_type {
-        StorageType::Json => {
-            let storage = json::JsonStorage::new(path);
+pub fn create_storage(path: &Path) -> Result<Box<dyn Storage>, StorageError> {
+    let config = crate::config::Config {
+        storage_path: Some(path.to_str().unwrap().to_string()),
+        ..Default::default()
+    };
+
+    match config.storage_type.as_deref().unwrap_or("json") {
+        "json" => {
+            let storage = json::JsonStorage::new(config)?;
             Ok(Box::new(storage))
         }
-        StorageType::Sqlite => {
-            let storage = sqlite::SqliteStorage::new(path)?;
+        "sqlite" => {
+            let storage = sqlite::SqliteStorage::new(config)?;
+            Ok(Box::new(storage))
+        }
+        _ => {
+            let storage = json::JsonStorage::new(config)?;
             Ok(Box::new(storage))
         }
     }
@@ -301,18 +316,31 @@ pub fn create_storage(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
+    use crate::storage::test_utils::create_test_config_manager;
 
     #[test]
-    fn test_storage_creation() {
-        let temp_file = NamedTempFile::new().unwrap();
+    fn test_storage_manager_default() {
+        let (_manager, _temp_dir) = create_test_config_manager();
+        let storage = create_storage(Path::new("test.json")).unwrap();
+        assert!(storage.load().is_ok());
+    }
 
-        // Test JSON storage creation
-        let json_storage = create_storage(StorageType::Json, temp_file.path()).unwrap();
-        assert!(json_storage.load().is_ok());
+    #[test]
+    fn test_storage_manager_json() {
+        let (_manager, _temp_dir) = create_test_config_manager();
+        let storage = create_storage(Path::new("test.json")).unwrap();
+        assert!(storage.load().is_ok());
+    }
 
-        // Test SQLite storage creation
-        let sqlite_storage = create_storage(StorageType::Sqlite, temp_file.path()).unwrap();
-        assert!(sqlite_storage.load().is_ok());
+    #[test]
+    fn test_storage_manager_sqlite() {
+        let (_manager, _temp_dir) = create_test_config_manager();
+        let storage = create_storage(Path::new("test.db")).unwrap();
+
+        // Initialize with empty data
+        let data = StorageData::new();
+        storage.save(&data).expect("Failed to initialize storage");
+
+        assert!(storage.load().is_ok());
     }
 }
