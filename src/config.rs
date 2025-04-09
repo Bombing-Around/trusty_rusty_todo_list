@@ -417,9 +417,9 @@ impl ConfigManager {
     }
 
     pub fn create_storage(&self) -> Result<Box<dyn Storage>, StorageError> {
-        let path = self.get("storage.path").ok_or_else(|| {
-            StorageError::Storage("Storage path not configured".to_string())
-        })?;
+        let path = self
+            .get("storage.path")
+            .ok_or_else(|| StorageError::Storage("Storage path not configured".to_string()))?;
 
         let config = Config {
             storage_path: Some(path),
