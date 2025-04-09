@@ -338,7 +338,7 @@ impl Storage for SqliteStorage {
                     task.description,
                     task.category_id,
                     task.completed,
-                    Self::priority_to_string(task.priority.clone()),
+                    Self::priority_to_string(task.priority),
                     task.due_date.map(|dt| dt.to_rfc3339()),
                     task.order,
                     task.created_at.to_rfc3339(),

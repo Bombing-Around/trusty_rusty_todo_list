@@ -2,6 +2,7 @@ use crate::config::Config;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use std::str::FromStr;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Task {
@@ -146,34 +147,24 @@ impl Category {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub enum Priority {
     High,
+    #[default]
     Medium,
     Low,
 }
 
-#[allow(dead_code)]
-impl Priority {
-    pub fn from_str(s: &str) -> Result<Self, PriorityError> {
+impl FromStr for Priority {
+    type Err = PriorityError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "high" => Ok(Priority::High),
             "medium" => Ok(Priority::Medium),
             "low" => Ok(Priority::Low),
             _ => Err(PriorityError::InvalidPriority(s.to_string())),
         }
-    }
-
-    pub fn to_str(self) -> &'static str {
-        match self {
-            Priority::High => "high",
-            Priority::Medium => "medium",
-            Priority::Low => "low",
-        }
-    }
-
-    pub fn default() -> Self {
-        Priority::Medium
     }
 }
 
@@ -235,6 +226,12 @@ impl From<StorageError> for CategoryError {
 impl From<CategoryError> for StorageError {
     fn from(error: CategoryError) -> Self {
         StorageError::Model(error.to_string())
+    }
+}
+
+impl Default for StorageData {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

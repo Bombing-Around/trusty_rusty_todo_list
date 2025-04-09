@@ -292,8 +292,10 @@ pub trait Storage {
 
 #[allow(dead_code)]
 pub fn create_storage(path: &Path) -> Result<Box<dyn Storage>, StorageError> {
-    let mut config = crate::config::Config::default();
-    config.storage_path = Some(path.to_str().unwrap().to_string());
+    let config = crate::config::Config {
+        storage_path: Some(path.to_str().unwrap().to_string()),
+        ..Default::default()
+    };
 
     match config.storage_type.as_deref().unwrap_or("json") {
         "json" => {

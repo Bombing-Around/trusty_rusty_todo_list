@@ -192,8 +192,10 @@ impl ConfigManager {
             |p| p.to_path_buf(),
         );
 
-        let mut config = Config::default();
-        config.storage_path = Some(path.to_str().unwrap().to_string());
+        let config = Config {
+            storage_path: Some(path.to_str().unwrap().to_string()),
+            ..Default::default()
+        };
 
         let storage = Box::new(JsonStorage::new(config)?);
         let mut config_manager = Self {
@@ -415,21 +417,22 @@ impl ConfigManager {
     }
 
     pub fn create_storage(&self) -> Result<Box<dyn Storage>, StorageError> {
-        let path = self
-            .get("storage.path")
-            .ok_or_else(|| StorageError::Storage("Storage path not configured".to_string()))?;
-        let path = PathBuf::from(shellexpand::tilde(&path).to_string());
+        let path = self.get("storage.path").ok_or_else(|| {
+            StorageError::Storage("Storage path not configured".to_string())
+        })?;
 
-        let mut config = Config::default();
-        config.storage_path = Some(path.to_str().unwrap().to_string());
-        config.storage_type = self.get("storage.type");
+        let config = Config {
+            storage_path: Some(path),
+            storage_type: self.get("storage.type"),
+            ..Default::default()
+        };
 
-        match config.storage_type.as_deref().unwrap_or("json") {
-            "json" => {
+        match config.storage_type.as_deref() {
+            Some("json") => {
                 let storage = JsonStorage::new(config)?;
                 Ok(Box::new(storage))
             }
-            "sqlite" => {
+            Some("sqlite") => {
                 let storage = sqlite::SqliteStorage::new(config)?;
                 Ok(Box::new(storage))
             }
@@ -449,8 +452,8 @@ impl ConfigManager {
     }
 
     #[allow(dead_code)]
-    pub fn get_storage_ref(&self) -> &Box<dyn Storage> {
-        &self.storage
+    pub fn get_storage_ref(&self) -> &dyn Storage {
+        &*self.storage
     }
 }
 

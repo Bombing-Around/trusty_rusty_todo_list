@@ -21,8 +21,10 @@ impl TestStorage {
             .expect("Failed to create temporary directory");
 
         let storage_path = temp_dir.path().join("test_storage.json");
-        let mut config = Config::default();
-        config.storage_path = Some(storage_path.to_str().unwrap().to_string());
+        let config = Config {
+            storage_path: Some(storage_path.to_str().unwrap().to_string()),
+            ..Default::default()
+        };
 
         let storage = Box::new(JsonStorage::new(config).expect("Failed to create test storage"));
 
@@ -51,6 +53,12 @@ impl TestStorage {
 impl Drop for TestStorage {
     fn drop(&mut self) {
         // TempDir will automatically clean up on drop
+    }
+}
+
+impl Default for TestStorage {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -98,8 +106,10 @@ pub fn create_test_storage() -> (Box<dyn Storage>, tempfile::TempDir) {
         .expect("Failed to create temporary directory");
     let storage_path = temp_dir.path().join("test.json");
 
-    let mut config = Config::default();
-    config.storage_path = Some(storage_path.to_str().unwrap().to_string());
+    let config = Config {
+        storage_path: Some(storage_path.to_str().unwrap().to_string()),
+        ..Default::default()
+    };
 
     let storage = Box::new(JsonStorage::new(config).expect("Failed to create test storage"));
 
