@@ -192,6 +192,11 @@ impl ConfigManager {
             |p| p.to_path_buf(),
         );
 
+        // Create parent directories if they don't exist
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         let config = Config {
             storage_path: Some(path.to_str().unwrap().to_string()),
             ..Default::default()
