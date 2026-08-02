@@ -45,7 +45,7 @@ The binary named `trtodo` will accept various arguments
 | `trtodo deleted flush`                                                                                | Remove all deleted items from "Deleted" category                                                                                          |
 | `trtodo --help`                                                                                       | List these commands                                                                                                                       |
 | `trtodo --help <command>`                                                                             | Describe command and its arguments                                                                                                        |
-| `trtodo --config <path>`                                                                              | Uses a configuration file named `trtodo-config.json` in the referenced path                                                               |
+| `trtodo --config <path>`                                                                              | Uses the configuration file at the given path instead of the default. May also be set via the `TRTODO_CONFIG` environment variable; the flag wins  |
 
 ## Additional Behaviors
 
@@ -70,77 +70,3 @@ Configuration values are stored in `trtodo-config.json`. By default it's written
 | `storage.path`          | `~/.config/trtodo` | string              | Path to storage location                                                                                                              |
 | `default-category`      | `null`             | string              | Default category to use when no category is specified                                                                                 |
 | `default-priority`      | `medium`           | `high\|medium\|low` | Default priority for new tasks                                                                                                        |
-
-## Database Migrations
-
-When using SQLite storage, the application includes a migration system to handle schema changes. This system:
-
-1. Tracks the current schema version in a `schema_version` table
-2. Automatically applies pending migrations on startup
-3. Supports both forward migrations (up) and backward migrations (down)
-4. Uses transactions to ensure data consistency
-5. Provides rollback capabilities if needed
-
-### Adding New Migrations
-
-To add a new migration:
-
-1. Add a new migration to the `MIGRATIONS` array in `src/storage/migrations.rs`:
-```rust
-pub const MIGRATIONS: &[Migration] = &[
-    Migration {
-        version: 2,
-        up: "ALTER TABLE tasks ADD COLUMN due_date TEXT;",
-        down: "ALTER TABLE tasks DROP COLUMN due_date;",
-    },
-];
-```
-
-2. The migration system will automatically:
-   - Detect the current schema version
-   - Apply any pending migrations in sequence
-   - Handle rollbacks if needed
-   - Maintain data integrity using transactions
-
-### Migration Guidelines
-
-1. Each migration should have a unique version number
-2. Migrations should be idempotent (safe to run multiple times)
-3. Down migrations should exactly reverse the changes made in the up migration
-4. Use transactions to ensure data consistency
-5. Test both up and down migrations thoroughly
-
-### Example Migration
-
-```rust
-Migration {
-    version: 2,
-    up: r#"
-        -- Add new column with default value
-        ALTER TABLE tasks ADD COLUMN due_date TEXT;
-        -- Update existing rows with a default value
-        UPDATE tasks SET due_date = datetime('now') WHERE due_date IS NULL;
-    "#,
-    down: "ALTER TABLE tasks DROP COLUMN due_date;",
-}
-```
-
-### Migration Process
-
-1. When the application starts with SQLite storage:
-   - Checks if the schema version table exists
-   - Creates it if it doesn't exist
-   - Sets initial version if needed
-   - Applies any pending migrations
-
-2. During migration:
-   - Each migration runs in a transaction
-   - If a migration fails, the transaction is rolled back
-   - The schema version is updated only after successful migration
-   - Migrations are applied in sequence by version number
-
-3. Rollback process:
-   - Migrations can be rolled back to any previous version
-   - Down migrations are applied in reverse order
-   - Each rollback runs in a transaction
-   - Schema version is updated after each successful rollback

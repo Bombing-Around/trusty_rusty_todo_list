@@ -1,1 +1,4 @@
 /target
+
+# Ephemeral git worktrees created by tooling
+/.claude/worktrees/
