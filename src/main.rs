@@ -5,33 +5,46 @@ mod storage;
 
 use clap::Parser;
 use cli::{Cli, Commands, ConfigCommands};
-use config::ConfigManager;
+use config::{ConfigError, ConfigManager};
+use thiserror::Error;
+
+/// Top-level application error type.
+///
+/// Wraps errors from the various subsystems (config, and eventually
+/// storage/task/category once those commands are wired up) so `main` has a
+/// single place to format and report failures.
+#[derive(Error, Debug)]
+pub enum CliError {
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error("invalid key=value pair '{0}': expected format key=value")]
+    MalformedKeyValue(String),
+}
 
 fn main() {
+    if let Err(e) = run() {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), CliError> {
     let cli = Cli::parse();
 
     // Initialize config manager
-    let mut config_manager = ConfigManager::new(None).expect("Failed to initialize config manager");
+    let mut config_manager = ConfigManager::new(None)?;
 
     match cli.command {
         Commands::Config { command } => match command {
             ConfigCommands::Set { key_value } => {
-                let parts: Vec<&str> = key_value.split('=').collect();
-                if parts.len() != 2 {
-                    eprintln!("Invalid key-value format. Use key=value");
-                    std::process::exit(1);
-                }
-                if let Err(e) = config_manager.set(parts[0], parts[1]) {
-                    eprintln!("Failed to set config: {}", e);
-                    std::process::exit(1);
-                }
+                let (key, value) = key_value
+                    .split_once('=')
+                    .ok_or_else(|| CliError::MalformedKeyValue(key_value.clone()))?;
+                config_manager.set(key, value)?;
                 println!("Configuration updated successfully");
             }
             ConfigCommands::Default { key } => {
-                if let Err(e) = config_manager.unset(&key) {
-                    eprintln!("Failed to reset config: {}", e);
-                    std::process::exit(1);
-                }
+                config_manager.unset(&key)?;
                 println!("Configuration reset to default");
             }
             ConfigCommands::List => {
@@ -45,4 +58,6 @@ fn main() {
             println!("Command handling not yet implemented");
         }
     }
+
+    Ok(())
 }
