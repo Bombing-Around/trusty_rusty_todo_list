@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, ValueEnum, PartialEq)]
 pub enum Priority {
@@ -10,6 +11,17 @@ pub enum Priority {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
+    /// Path to the configuration file to use instead of the default
+    ///
+    /// Takes precedence over the `TRTODO_CONFIG` environment variable.
+    #[arg(
+        long = "config",
+        value_name = "PATH",
+        global = true,
+        env = "TRTODO_CONFIG"
+    )]
+    pub config: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -195,6 +207,21 @@ mod tests {
 
     fn try_parse_args(args: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(args)
+    }
+
+    #[test]
+    fn test_config_path_override() {
+        // Accepted before the subcommand.
+        let cli = parse_args(&["trtodo", "--config", "/tmp/x.json", "config", "list"]);
+        assert_eq!(cli.config, Some(PathBuf::from("/tmp/x.json")));
+
+        // And after it, since the argument is global.
+        let cli = parse_args(&["trtodo", "config", "list", "--config", "/tmp/x.json"]);
+        assert_eq!(cli.config, Some(PathBuf::from("/tmp/x.json")));
+
+        // Absent by default, so ConfigManager falls back to the $HOME location.
+        let cli = parse_args(&["trtodo", "config", "list"]);
+        assert_eq!(cli.config, None);
     }
 
     #[test]

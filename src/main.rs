@@ -31,8 +31,9 @@ fn main() {
 fn run() -> Result<(), CliError> {
     let cli = Cli::parse();
 
-    // Initialize config manager
-    let mut config_manager = ConfigManager::new(None)?;
+    // Initialize config manager, honoring an explicit --config / TRTODO_CONFIG
+    // override so callers (and tests) can point at a config file outside $HOME.
+    let mut config_manager = ConfigManager::new(cli.config.as_deref())?;
 
     match cli.command {
         Commands::Config { command } => match command {

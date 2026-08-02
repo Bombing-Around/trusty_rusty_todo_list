@@ -45,7 +45,7 @@ The binary named `trtodo` will accept various arguments
 | `trtodo deleted flush`                                                                                | Remove all deleted items from "Deleted" category                                                                                          |
 | `trtodo --help`                                                                                       | List these commands                                                                                                                       |
 | `trtodo --help <command>`                                                                             | Describe command and its arguments                                                                                                        |
-| `trtodo --config <path>`                                                                              | Uses a configuration file named `trtodo-config.json` in the referenced path                                                               |
+| `trtodo --config <path>`                                                                              | Uses the configuration file at the given path instead of the default. May also be set via the `TRTODO_CONFIG` environment variable; the flag wins  |
 
 ## Additional Behaviors
 
