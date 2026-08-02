@@ -135,6 +135,25 @@ impl<'a> TaskManager<'a> {
         Ok(self.storage.soft_delete_task(task_id)?)
     }
 
+    /// Permanently removes every currently soft-deleted task, unconditionally
+    /// (`trtodo deleted flush`). Returns how many were removed, for the CLI
+    /// to report back to the user. See `Storage::purge_all_deleted_tasks`
+    /// for why this is a distinct primitive from the automatic,
+    /// `deleted-task-lifespan`-gated purge below.
+    pub fn flush_deleted(&self) -> Result<usize, TaskManagerError> {
+        Ok(self.storage.purge_all_deleted_tasks()?)
+    }
+
+    /// Automatically purges tasks that were soft-deleted more than
+    /// `days_threshold` days ago (README: `deleted-task-lifespan`). A
+    /// threshold of `0` means "never" and is handled by
+    /// `Storage::purge_deleted_tasks` itself. Distinct from `flush_deleted`:
+    /// this is the age-gated sweep run automatically on every invocation
+    /// (see `main::open_storage`), not the manual, unconditional flush.
+    pub fn purge_expired_deleted(&self, days_threshold: u32) -> Result<(), TaskManagerError> {
+        Ok(self.storage.purge_deleted_tasks(days_threshold)?)
+    }
+
     pub fn rename_task(&self, mut task: Task, new_title: String) -> Result<(), TaskManagerError> {
         task.update_title(new_title)?;
         self.storage.update_task(task)?;
@@ -352,6 +371,45 @@ mod tests {
         let listed = manager.list_tasks(None, false, None).unwrap();
         assert!(listed.is_empty());
         assert!(storage.get_task(id).unwrap().unwrap().is_deleted());
+    }
+
+    #[test]
+    fn flush_deleted_purges_deleted_tasks_but_leaves_live_ones_alone() {
+        let test_storage = TestStorage::new();
+        let storage = test_storage.storage();
+        let manager = TaskManager::new(storage);
+        let deleted_id = add(storage, "Buy milk", 0, Priority::Medium);
+        let live_id = add(storage, "Walk dog", 0, Priority::Medium);
+        manager.delete_task(deleted_id).unwrap();
+
+        let purged = manager.flush_deleted().unwrap();
+        assert_eq!(purged, 1);
+
+        assert!(storage.get_task(deleted_id).unwrap().is_none());
+        assert!(storage.get_task(live_id).unwrap().is_some());
+
+        // Nothing left to flush the second time.
+        assert_eq!(manager.flush_deleted().unwrap(), 0);
+    }
+
+    #[test]
+    fn purge_expired_deleted_respects_the_zero_means_never_default() {
+        let test_storage = TestStorage::new();
+        let storage = test_storage.storage();
+        let manager = TaskManager::new(storage);
+        let id = add(storage, "Ancient task", 0, Priority::Low);
+        manager.delete_task(id).unwrap();
+
+        // Backdate the deletion well past any plausible threshold.
+        let mut task = storage.get_task(id).unwrap().unwrap();
+        task.deleted_at = Some(chrono::Utc::now() - chrono::Duration::days(3650));
+        storage.update_task(task).unwrap();
+
+        manager.purge_expired_deleted(0).unwrap();
+        assert!(storage.get_task(id).unwrap().is_some());
+
+        manager.purge_expired_deleted(30).unwrap();
+        assert!(storage.get_task(id).unwrap().is_none());
     }
 
     #[test]

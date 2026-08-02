@@ -116,8 +116,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConfigCommands,
     },
-    /// Flush deleted items
-    Flush,
+    /// Soft-deleted task management commands
+    Deleted {
+        #[command(subcommand)]
+        command: DeletedCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -179,6 +182,17 @@ pub enum CategoryCommands {
     },
     /// List all categories
     List,
+}
+
+/// README: `trtodo deleted flush` - "Remove all deleted items". `deleted
+/// list` (to preview what a flush would destroy) and restoring a
+/// soft-deleted task are deliberately not here: neither is documented in the
+/// README or part of issue #6's scope, and `Task::restore` stays unwired for
+/// the same reason.
+#[derive(Subcommand)]
+pub enum DeletedCommands {
+    /// Permanently remove all soft-deleted tasks
+    Flush,
 }
 
 #[derive(Subcommand)]
@@ -352,6 +366,18 @@ mod tests {
                 _ => panic!("Expected Config List command"),
             },
             _ => panic!("Expected Config command"),
+        }
+    }
+
+    #[test]
+    fn test_deleted_commands() {
+        // Test deleted flush
+        let cli = parse_args(&["trtodo", "deleted", "flush"]);
+        match cli.command {
+            Commands::Deleted { command } => match command {
+                DeletedCommands::Flush => {}
+            },
+            _ => panic!("Expected Deleted command"),
         }
     }
 

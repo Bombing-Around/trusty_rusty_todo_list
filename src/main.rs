@@ -8,7 +8,7 @@ mod task_manager;
 
 use category_manager::{CategoryManager, UNCATEGORIZED_ID};
 use clap::Parser;
-use cli::{CategoryCommands, Cli, Commands, ConfigCommands};
+use cli::{CategoryCommands, Cli, Commands, ConfigCommands, DeletedCommands};
 use config::{ConfigError, ConfigManager};
 use models::{Category, CategoryError, Priority, PriorityError, StorageError};
 use prompter::StdinPrompter;
@@ -100,10 +100,9 @@ fn run() -> Result<(), CliError> {
             let storage = open_storage(&config_manager)?;
             run_category_command(&*storage, command)?;
         }
-        // `deleted flush` is issue #6 (automatic/manual purging) - explicitly
-        // out of scope here; leave it unimplemented rather than guess at it.
-        Commands::Flush => {
-            println!("Command handling not yet implemented");
+        Commands::Deleted { command } => {
+            let storage = open_storage(&config_manager)?;
+            run_deleted_command(&*storage, command)?;
         }
         other => {
             let storage = open_storage(&config_manager)?;
@@ -119,6 +118,17 @@ fn run() -> Result<(), CliError> {
 /// `storage.path` is the storage *location* (a directory, per the README's
 /// `~/.config/trtodo` default); the data file inside it is named after the
 /// chosen backend.
+///
+/// Also sweeps up anything overdue for automatic purging under
+/// `deleted-task-lifespan` (issue #6) before handing the storage back. This
+/// is the one place every command that touches task storage passes through -
+/// `Commands::Config` never calls `open_storage` at all, since it has no
+/// need to touch task storage, so the sweep correctly never runs for it (and
+/// never pays `open_storage`'s side effect of creating directories, either).
+/// Piggybacking here means a future new command can't forget to wire the
+/// sweep in, and it stays cheap and silent on the common path: the
+/// documented default threshold is 0 ("never"), and `purge_deleted_tasks`
+/// itself short-circuits before touching disk in that case.
 fn open_storage(config_manager: &ConfigManager) -> Result<Box<dyn Storage>, CliError> {
     let storage_type = match config_manager.get("storage.type").as_deref() {
         None | Some("json") => StorageType::Json,
@@ -143,7 +153,35 @@ fn open_storage(config_manager: &ConfigManager) -> Result<Box<dyn Storage>, CliE
     // so on save - make sure it exists before either backend opens the file.
     std::fs::create_dir_all(&dir)?;
 
-    Ok(create_storage(storage_type, &dir.join(file_name))?)
+    let storage = create_storage(storage_type, &dir.join(file_name))?;
+    purge_expired_deleted_tasks(&*storage, config_manager)?;
+
+    Ok(storage)
+}
+
+/// Runs the automatic, `deleted-task-lifespan`-gated purge (README: "purged
+/// automatically after `deleted-task-lifespan` days"; issue #6) once per
+/// invocation, from within `open_storage`. See that function's doc comment
+/// for why it lives there rather than being duplicated across `run`'s
+/// branches.
+///
+/// A stored `deleted-task-lifespan` that fails to parse as a plain integer
+/// degrades to "don't purge" rather than surfacing an error: whatever the
+/// user actually asked for (e.g. `list`) should not fail just because
+/// cleanup housekeeping couldn't run.
+fn purge_expired_deleted_tasks(
+    storage: &dyn Storage,
+    config_manager: &ConfigManager,
+) -> Result<(), CliError> {
+    let threshold = config_manager
+        .get("deleted-task-lifespan")
+        .and_then(|v| v.parse::<u32>().ok());
+
+    if let Some(threshold) = threshold {
+        TaskManager::new(storage).purge_expired_deleted(threshold)?;
+    }
+
+    Ok(())
 }
 
 fn run_category_command(storage: &dyn Storage, command: CategoryCommands) -> Result<(), CliError> {
@@ -211,6 +249,20 @@ fn run_category_command(storage: &dyn Storage, command: CategoryCommands) -> Res
                 None => println!("Current category: unknown (ID: {})", id),
             },
         },
+    }
+
+    Ok(())
+}
+
+/// Dispatches `trtodo deleted ...`. Mirrors `run_category_command`'s shape.
+fn run_deleted_command(storage: &dyn Storage, command: DeletedCommands) -> Result<(), CliError> {
+    let task_manager = TaskManager::new(storage);
+
+    match command {
+        DeletedCommands::Flush => {
+            let count = task_manager.flush_deleted()?;
+            println!("Flushed {} deleted task(s)", count);
+        }
     }
 
     Ok(())
@@ -306,7 +358,7 @@ fn category_display_name(
 }
 
 /// Dispatches every task-related command (everything in `Commands` except
-/// `Category`, `Config`, and `Flush`, which `run` handles itself). Mirrors
+/// `Category`, `Config`, and `Deleted`, which `run` handles itself). Mirrors
 /// `run_category_command`'s shape: build the managers once, match on the
 /// command, print a short human-readable confirmation for each.
 fn run_task_command(
@@ -448,8 +500,8 @@ fn run_task_command(
                 );
             }
         }
-        Commands::Category { .. } | Commands::Config { .. } | Commands::Flush => {
-            unreachable!("Category/Config/Flush are dispatched in `run` before reaching here")
+        Commands::Category { .. } | Commands::Config { .. } | Commands::Deleted { .. } => {
+            unreachable!("Category/Config/Deleted are dispatched in `run` before reaching here")
         }
     }
 

@@ -275,6 +275,12 @@ pub trait Storage {
     /// editing a soft-deleted task (e.g. during a `restore` that fails
     /// partway, or any future feature that touches a deleted task) must not
     /// reset its purge clock.
+    ///
+    /// Writes back only when something was actually purged. This sweep runs
+    /// once per invocation from `main::open_storage`, so saving
+    /// unconditionally would make read-only commands like `list` rewrite the
+    /// whole data file on every run whenever a non-zero lifespan is
+    /// configured.
     fn purge_deleted_tasks(&self, days_threshold: u32) -> Result<(), StorageError> {
         if days_threshold == 0 {
             return Ok(());
@@ -283,12 +289,49 @@ pub trait Storage {
         let mut data = self.load()?;
         let cutoff = chrono::Utc::now() - chrono::Duration::days(days_threshold as i64);
 
+        let before = data.tasks.len();
         data.tasks.retain(|t| match t.deleted_at {
             Some(deleted_at) => deleted_at > cutoff,
             None => true,
         });
 
+        if data.tasks.len() == before {
+            return Ok(());
+        }
+
         self.save(&data)
+    }
+
+    /// Unconditionally and permanently removes *every* currently soft-deleted
+    /// task, no matter how recently it was deleted. This is the primitive
+    /// behind the manual `deleted flush` command (README: "Remove all
+    /// deleted items") - an explicit, one-shot user action.
+    ///
+    /// Do NOT confuse this with `purge_deleted_tasks` above:
+    ///   - `purge_deleted_tasks(days_threshold)` is the *automatic*,
+    ///     age-gated sweep driven by `deleted-task-lifespan`, where a
+    ///     threshold of `0` means "never purge anything" (the documented
+    ///     default).
+    ///   - `purge_all_deleted_tasks` (this method) takes no threshold at all
+    ///     and always empties out every soft-deleted task. Calling
+    ///     `purge_deleted_tasks(0)` to implement a manual flush would be
+    ///     exactly backwards - there, `0` means "purge nothing".
+    ///
+    /// Returns how many tasks were actually removed, so callers (the CLI)
+    /// can report it back to the user.
+    fn purge_all_deleted_tasks(&self) -> Result<usize, StorageError> {
+        let mut data = self.load()?;
+        let before = data.tasks.len();
+        data.tasks.retain(|t| t.deleted_at.is_none());
+        let purged = before - data.tasks.len();
+
+        // Same reasoning as `purge_deleted_tasks`: a flush with nothing to
+        // purge is a documented no-op, so don't rewrite the data file for it.
+        if purged > 0 {
+            self.save(&data)?;
+        }
+
+        Ok(purged)
     }
 
     fn get_all_categories(&self) -> Result<Vec<Category>, StorageError> {
@@ -600,5 +643,89 @@ mod tests {
         let remaining = storage.get_task(recent_task_id).unwrap();
         assert!(remaining.is_some());
         assert!(remaining.unwrap().is_deleted());
+    }
+
+    /// The automatic sweep runs on *every* invocation (see
+    /// `main::open_storage`), so when there is nothing overdue it must leave
+    /// the data file completely alone rather than rewriting it. Otherwise a
+    /// read-only `trtodo list` would rewrite storage on every run whenever a
+    /// non-zero `deleted-task-lifespan` is configured.
+    #[test]
+    fn test_purge_deleted_tasks_does_not_rewrite_storage_when_nothing_is_due() {
+        use crate::storage::test_utils::TestStorage;
+
+        let test_storage = TestStorage::new();
+        let storage = test_storage.storage();
+
+        let mut task = Task::new("Recently deleted".to_string(), 0, None, Priority::Low).unwrap();
+        task.id = storage.get_next_task_id().unwrap();
+        task.deleted_at = Some(Utc::now() - chrono::Duration::days(1));
+        storage.add_task(task).unwrap();
+
+        let path = test_storage.path();
+        let before = std::fs::read_to_string(path).unwrap();
+
+        // Deleted yesterday, threshold 30 days: nothing is due.
+        storage.purge_deleted_tasks(30).unwrap();
+
+        let after = std::fs::read_to_string(path).unwrap();
+        assert_eq!(
+            before, after,
+            "a sweep with nothing due must not rewrite the data file"
+        );
+
+        // A flush that purges nothing is likewise a no-op on disk.
+        let test_storage2 = TestStorage::new();
+        let storage2 = test_storage2.storage();
+        let mut live = Task::new("Live".to_string(), 0, None, Priority::Low).unwrap();
+        live.id = storage2.get_next_task_id().unwrap();
+        storage2.add_task(live).unwrap();
+        let before = std::fs::read_to_string(test_storage2.path()).unwrap();
+        assert_eq!(storage2.purge_all_deleted_tasks().unwrap(), 0);
+        let after = std::fs::read_to_string(test_storage2.path()).unwrap();
+        assert_eq!(before, after);
+    }
+
+    /// `purge_all_deleted_tasks` (the `deleted flush` primitive) must remove
+    /// every soft-deleted task unconditionally - including ones deleted only
+    /// moments ago - unlike `purge_deleted_tasks`, which gates on age and
+    /// treats a `0` threshold as "purge nothing". It must also leave live
+    /// tasks completely untouched and report an accurate count.
+    #[test]
+    fn test_purge_all_deleted_tasks_removes_everything_deleted_regardless_of_age() {
+        use crate::storage::test_utils::TestStorage;
+
+        let test_storage = TestStorage::new();
+        let storage = test_storage.storage();
+        let now = Utc::now();
+
+        let mut just_deleted =
+            Task::new("Just deleted".to_string(), 0, None, Priority::Low).unwrap();
+        just_deleted.id = storage.get_next_task_id().unwrap();
+        just_deleted.deleted_at = Some(now);
+        let just_deleted_id = just_deleted.id;
+        storage.add_task(just_deleted).unwrap();
+
+        let mut long_deleted =
+            Task::new("Long deleted".to_string(), 0, None, Priority::Low).unwrap();
+        long_deleted.id = storage.get_next_task_id().unwrap();
+        long_deleted.deleted_at = Some(now - chrono::Duration::days(3650));
+        let long_deleted_id = long_deleted.id;
+        storage.add_task(long_deleted).unwrap();
+
+        let mut live_task = Task::new("Still alive".to_string(), 0, None, Priority::Low).unwrap();
+        live_task.id = storage.get_next_task_id().unwrap();
+        let live_task_id = live_task.id;
+        storage.add_task(live_task).unwrap();
+
+        let purged = storage.purge_all_deleted_tasks().unwrap();
+        assert_eq!(purged, 2);
+
+        assert!(storage.get_task(just_deleted_id).unwrap().is_none());
+        assert!(storage.get_task(long_deleted_id).unwrap().is_none());
+        assert!(storage.get_task(live_task_id).unwrap().is_some());
+
+        // Idempotent: nothing left to purge on a second call.
+        assert_eq!(storage.purge_all_deleted_tasks().unwrap(), 0);
     }
 }
