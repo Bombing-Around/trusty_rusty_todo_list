@@ -53,7 +53,7 @@ The first time `trtodo` is run it should offer to create the default categories 
 
 When operating on a `task_name`, the application will try to match the name - if it encounters the same name in multiple categories, it will prompt the user for which item on which to operate.
 
-When deleting an item it will be _soft_deleted_ and placed under a hidden magic category "Deleted" with the category_id of 0. Items in this list are purged every _n_ days, a value that is configurable.
+When deleting an item it will be _soft_deleted_: it is marked with a deletion timestamp but keeps its real category, so restoring it is lossless. Soft-deleted items are hidden from listings and searches, and are purged automatically after `deleted-task-lifespan` days (0, the default, means never).
 
 When deleting a category it is removed and its ID is made available again. All associated tasks are moved to the top unless a new category is provided.
 
