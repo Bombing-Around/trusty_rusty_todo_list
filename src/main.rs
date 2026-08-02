@@ -2,22 +2,25 @@ mod category_manager;
 mod cli;
 mod config;
 mod models;
+mod prompter;
 mod storage;
+mod task_manager;
 
 use category_manager::{CategoryManager, UNCATEGORIZED_ID};
 use clap::Parser;
 use cli::{CategoryCommands, Cli, Commands, ConfigCommands};
 use config::{ConfigError, ConfigManager};
-use models::{Category, CategoryError, StorageError};
+use models::{Category, CategoryError, Priority, PriorityError, StorageError};
+use prompter::StdinPrompter;
 use std::path::PathBuf;
 use storage::{create_storage, Storage, StorageType};
+use task_manager::{TaskManager, TaskManagerError};
 use thiserror::Error;
 
 /// Top-level application error type.
 ///
 /// Wraps errors from the various subsystems (config, storage, categories, and
-/// eventually tasks) so `main` has a single place to format and report
-/// failures.
+/// tasks) so `main` has a single place to format and report failures.
 #[derive(Error, Debug)]
 pub enum CliError {
     #[error(transparent)]
@@ -26,6 +29,10 @@ pub enum CliError {
     Category(#[from] CategoryError),
     #[error(transparent)]
     Storage(#[from] StorageError),
+    #[error(transparent)]
+    Task(#[from] TaskManagerError),
+    #[error(transparent)]
+    Priority(#[from] PriorityError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("invalid key=value pair '{0}': expected format key=value")]
@@ -34,6 +41,25 @@ pub enum CliError {
     UnknownStorageType(String),
     #[error("could not determine the home directory; set storage.path explicitly")]
     NoHomeDirectory,
+    /// README: category context lets commands "omit the --category
+    /// argument" - but only once one has actually been set via `category
+    /// use`. `CheckAll`/`UncheckAll` and the simple `move` syntax have no
+    /// `--category` argument at all, so with no context set there is no way
+    /// to know which category they mean.
+    #[error(
+        "no category context is set; run 'category use <category>' first, or pass --category explicitly"
+    )]
+    NoCategoryContext,
+    /// `Move` accepts two distinct syntaxes (see the README) modelled as one
+    /// `Commands::Move` variant with all-`Option` fields; any combination of
+    /// arguments that isn't exactly one of those two syntaxes is rejected
+    /// here rather than silently guessed at.
+    #[error(
+        "invalid 'move' arguments: use either '<task> --to <category>' (in category context) \
+         or '--from <category> --task <task> [--to <category>]' (omitting --to moves the task \
+         to Uncategorized)"
+    )]
+    InvalidMoveArguments,
 }
 
 fn main() {
@@ -74,8 +100,14 @@ fn run() -> Result<(), CliError> {
             let storage = open_storage(&config_manager)?;
             run_category_command(&*storage, command)?;
         }
-        _ => {
+        // `deleted flush` is issue #6 (automatic/manual purging) - explicitly
+        // out of scope here; leave it unimplemented rather than guess at it.
+        Commands::Flush => {
             println!("Command handling not yet implemented");
+        }
+        other => {
+            let storage = open_storage(&config_manager)?;
+            run_task_command(&*storage, &config_manager, other)?;
         }
     }
 
@@ -198,4 +230,228 @@ fn resolve_category(manager: &CategoryManager, reference: &str) -> Result<Catego
     }
 
     Err(CategoryError::NotFound(reference.to_string()).into())
+}
+
+/// Converts a CLI-facing priority into the domain model's `Priority`.
+/// Deliberately explicit rather than `#[derive]`d or `From`-shared: `cli::Priority`
+/// exists purely to give clap a `ValueEnum`, and keeping the conversion here (in
+/// the thin dispatch layer) means neither `cli` nor `models` needs to depend on
+/// the other.
+fn to_model_priority(priority: cli::Priority) -> Priority {
+    match priority {
+        cli::Priority::High => Priority::High,
+        cli::Priority::Medium => Priority::Medium,
+        cli::Priority::Low => Priority::Low,
+    }
+}
+
+/// Resolves the effective `default-priority` config value (issue #22 made
+/// this reliably resolve to the documented default, `medium`, on a fresh
+/// install) to a domain `Priority`, for `add` invocations that omit
+/// `--priority`.
+fn resolve_default_priority(config_manager: &ConfigManager) -> Result<Priority, CliError> {
+    let value = config_manager
+        .get("default-priority")
+        .unwrap_or_else(|| "medium".to_string());
+    Ok(Priority::from_str(&value)?)
+}
+
+/// Resolves the category a `Check`/`Uncheck` invocation should operate in:
+/// the explicit `--category` if given, otherwise the current category
+/// context (README: "commands that require category specification can omit
+/// the --category argument" once a context is set).
+fn resolve_task_category(
+    category_manager: &CategoryManager,
+    category: Option<String>,
+) -> Result<u64, CliError> {
+    match category {
+        Some(name) => Ok(resolve_category(category_manager, &name)?.id),
+        None => require_category_context(category_manager),
+    }
+}
+
+/// The category ID commands with *no* `--category` argument at all
+/// (`CheckAll`/`UncheckAll`, the simple `move` syntax) must operate in.
+///
+/// Deliberately does NOT just call `CategoryManager::get_current_category`
+/// directly: that method returns `Some(UNCATEGORIZED_ID)` even when nothing
+/// was ever set (so `category show` has something sensible to print), and
+/// treating that as "the user wants Uncategorized" here would silently
+/// operate on the wrong tasks whenever the user simply forgot to set a
+/// context, instead of telling them to set one.
+fn require_category_context(category_manager: &CategoryManager) -> Result<u64, CliError> {
+    if category_manager.has_explicit_category_context() {
+        Ok(category_manager
+            .get_current_category()
+            .expect("has_explicit_category_context() true implies Some(..)"))
+    } else {
+        Err(CliError::NoCategoryContext)
+    }
+}
+
+/// Resolves a category ID to a display name for output, special-casing the
+/// synthesized Uncategorized category the same way `CategoryCommands::Show`
+/// does.
+fn category_display_name(
+    category_manager: &CategoryManager,
+    category_id: u64,
+) -> Result<String, CliError> {
+    if category_id == UNCATEGORIZED_ID {
+        return Ok("Uncategorized".to_string());
+    }
+    Ok(category_manager
+        .get_category(category_id)?
+        .map(|c| c.name)
+        .unwrap_or_else(|| format!("(unknown category {})", category_id)))
+}
+
+/// Dispatches every task-related command (everything in `Commands` except
+/// `Category`, `Config`, and `Flush`, which `run` handles itself). Mirrors
+/// `run_category_command`'s shape: build the managers once, match on the
+/// command, print a short human-readable confirmation for each.
+fn run_task_command(
+    storage: &dyn Storage,
+    config_manager: &ConfigManager,
+    command: Commands,
+) -> Result<(), CliError> {
+    let category_manager = CategoryManager::new(storage);
+    let task_manager = TaskManager::new(storage);
+    // The real, interactive prompter. Its `choose` detects a non-interactive
+    // stdin (e.g. this binary run from a test harness or a script) and
+    // returns a clean `PromptError::NotInteractive` instead of blocking -
+    // see `crate::prompter` for why this is a trait rather than an inline
+    // `stdin().read_line()` call.
+    let mut prompter = StdinPrompter;
+
+    match command {
+        Commands::Add {
+            title,
+            category,
+            priority,
+        } => {
+            let category = resolve_category(&category_manager, &category)?;
+            let priority = match priority {
+                Some(p) => to_model_priority(p),
+                None => resolve_default_priority(config_manager)?,
+            };
+            let id = task_manager.add_task(title.clone(), category.id, priority, None)?;
+            println!(
+                "Task '{}' added with ID {} in category '{}'",
+                title, id, category.name
+            );
+        }
+        Commands::Delete {
+            title_or_id,
+            category,
+        } => {
+            let category = resolve_category(&category_manager, &category)?;
+            let task = task_manager.resolve_task(&title_or_id, Some(category.id), &mut prompter)?;
+            task_manager.delete_task(task.id)?;
+            println!("Task '{}' deleted", task.title);
+        }
+        Commands::Update {
+            title_or_id,
+            new_title,
+            category,
+        } => {
+            let category = resolve_category(&category_manager, &category)?;
+            let task = task_manager.resolve_task(&title_or_id, Some(category.id), &mut prompter)?;
+            let old_title = task.title.clone();
+            task_manager.rename_task(task, new_title.clone())?;
+            println!("Task '{}' renamed to '{}'", old_title, new_title);
+        }
+        Commands::Check {
+            title_or_id,
+            category,
+        } => {
+            let category_id = resolve_task_category(&category_manager, category)?;
+            let task = task_manager.resolve_task(&title_or_id, Some(category_id), &mut prompter)?;
+            let title = task.title.clone();
+            task_manager.set_completed(task, true)?;
+            println!("Task '{}' checked off", title);
+        }
+        Commands::Uncheck {
+            title_or_id,
+            category,
+        } => {
+            let category_id = resolve_task_category(&category_manager, category)?;
+            let task = task_manager.resolve_task(&title_or_id, Some(category_id), &mut prompter)?;
+            let title = task.title.clone();
+            task_manager.set_completed(task, false)?;
+            println!("Task '{}' unchecked", title);
+        }
+        Commands::CheckAll => {
+            let category_id = require_category_context(&category_manager)?;
+            let count = task_manager.set_all_completed(category_id, true)?;
+            println!("Checked off {} task(s)", count);
+        }
+        Commands::UncheckAll => {
+            let category_id = require_category_context(&category_manager)?;
+            let count = task_manager.set_all_completed(category_id, false)?;
+            println!("Unchecked {} task(s)", count);
+        }
+        Commands::Move {
+            task_name_or_id,
+            to_category,
+            from_category,
+            task,
+        } => {
+            // `Move` is one variant covering two distinct syntaxes (README):
+            //   simple:   `<task> --to <category>`             (needs a category context)
+            //   extended: `--from <category> --task <task> [--to <category>]`
+            // Any other combination of the four optional fields is rejected
+            // outright rather than guessed at.
+            let (task_ref, scope_category_id, target_category_id) =
+                match (task_name_or_id, to_category, from_category, task) {
+                    (Some(task_ref), Some(to), None, None) => {
+                        let scope = require_category_context(&category_manager)?;
+                        let target = resolve_category(&category_manager, &to)?.id;
+                        (task_ref, scope, target)
+                    }
+                    (None, to, Some(from), Some(task_ref)) => {
+                        let scope = resolve_category(&category_manager, &from)?.id;
+                        // Omitting --to in the extended syntax means "move to
+                        // Uncategorized" (README).
+                        let target = match to {
+                            Some(name) => resolve_category(&category_manager, &name)?.id,
+                            None => UNCATEGORIZED_ID,
+                        };
+                        (task_ref, scope, target)
+                    }
+                    _ => return Err(CliError::InvalidMoveArguments),
+                };
+
+            let task =
+                task_manager.resolve_task(&task_ref, Some(scope_category_id), &mut prompter)?;
+            task_manager.move_task(task.id, target_category_id)?;
+            let target_name = category_display_name(&category_manager, target_category_id)?;
+            println!("Task '{}' moved to '{}'", task.title, target_name);
+        }
+        Commands::List {
+            search,
+            completed,
+            priority,
+        } => {
+            let priority = priority.map(to_model_priority);
+            let tasks = task_manager.list_tasks(search.as_deref(), completed, priority)?;
+            println!("Tasks:");
+            for task in tasks {
+                let status = if task.completed { "x" } else { " " };
+                let category_name = category_display_name(&category_manager, task.category_id)?;
+                println!(
+                    "{}: [{}] {} (priority: {}, category: {})",
+                    task.id,
+                    status,
+                    task.title,
+                    task.priority.to_str(),
+                    category_name
+                );
+            }
+        }
+        Commands::Category { .. } | Commands::Config { .. } | Commands::Flush => {
+            unreachable!("Category/Config/Flush are dispatched in `run` before reaching here")
+        }
+    }
+
+    Ok(())
 }
