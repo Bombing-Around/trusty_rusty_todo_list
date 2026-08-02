@@ -8,13 +8,23 @@ pub struct Task {
     pub id: u64,
     pub title: String,
     pub description: Option<String>,
-    pub category_id: u64, // 0 for uncategorized
+    // 0 is the magic "Uncategorized" category ID - see
+    // `category_manager::UNCATEGORIZED_ID`. It does NOT mean deleted; deletion
+    // is tracked independently via `deleted_at` below (issue #29).
+    pub category_id: u64,
     pub completed: bool,
     pub priority: Priority,
     pub due_date: Option<DateTime<Utc>>,
     pub order: u32, // For custom sorting within category
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// When this task was soft-deleted, or `None` if it is live.
+    ///
+    /// `#[serde(default)]` keeps on-disk data written before this field
+    /// existed loadable - it simply comes back as "not deleted", mirroring
+    /// `StorageData::current_category`.
+    #[serde(default)]
+    pub deleted_at: Option<DateTime<Utc>>,
 }
 
 #[allow(dead_code)]
@@ -40,11 +50,32 @@ impl Task {
             order: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            deleted_at: None,
         })
     }
 
     pub fn is_uncategorized(&self) -> bool {
         self.category_id == 0
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.deleted_at.is_some()
+    }
+
+    /// Soft-deletes the task: it is hidden from listings/searches and becomes
+    /// eligible for purging (see `Storage::purge_deleted_tasks`), but its
+    /// `category_id` is left untouched. Keeping the real category is the
+    /// whole point of this design (issue #29) - it's what makes `restore`
+    /// trivial and stops category deletion from ever masquerading as task
+    /// deletion.
+    pub fn soft_delete(&mut self) {
+        self.deleted_at = Some(Utc::now());
+        self.updated_at = Utc::now();
+    }
+
+    pub fn restore(&mut self) {
+        self.deleted_at = None;
+        self.updated_at = Utc::now();
     }
 
     pub fn mark_completed(&mut self) {
@@ -208,7 +239,13 @@ impl StorageData {
             version: 1,
             tasks: Vec::new(),
             categories: Vec::new(),
-            config: Config::default(),
+            // The `config` field embedded in the task-data file is
+            // vestigial - the real config lives in `trtodo-config.json` via
+            // `ConfigStorage`. `Config::unset()` (nothing stored) is the
+            // honest value here; resolving it to the documented defaults
+            // would make this file start carrying a populated config blob
+            // it was never meant to own.
+            config: Config::unset(),
             current_category: None,
             last_sync: Utc::now(),
         }

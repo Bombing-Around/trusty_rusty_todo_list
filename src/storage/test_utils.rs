@@ -14,6 +14,7 @@ pub struct TestStorage {
     // Held purely for its `Drop`: it removes the directory backing `storage`.
     _temp_dir: TempDir,
     storage: JsonStorage,
+    path: std::path::PathBuf,
 }
 
 impl TestStorage {
@@ -23,7 +24,8 @@ impl TestStorage {
             .tempdir()
             .expect("failed to create temporary directory");
 
-        let storage = JsonStorage::new(temp_dir.path().join("test_storage.json"));
+        let path = temp_dir.path().join("test_storage.json");
+        let storage = JsonStorage::new(&path);
         storage
             .save(&StorageData::new())
             .expect("failed to initialize test storage");
@@ -31,10 +33,17 @@ impl TestStorage {
         Self {
             _temp_dir: temp_dir,
             storage,
+            path,
         }
     }
 
     pub fn storage(&self) -> &dyn Storage {
         &self.storage
+    }
+
+    /// The backing JSON file, for tests that need to assert on the bytes on
+    /// disk (e.g. that a no-op operation didn't rewrite them).
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
     }
 }

@@ -230,4 +230,39 @@ mod tests {
         let loaded = JsonStorage::new(&json_path).load().unwrap();
         assert_eq!(loaded.current_category, None);
     }
+
+    /// Data written before `deleted_at` existed has no such key on its tasks;
+    /// it must still load, coming back as "not deleted" (issue #29).
+    #[test]
+    fn test_load_task_without_deleted_at_field() {
+        let dir = tempdir().unwrap();
+        let json_path = dir.path().join("legacy_task.json");
+
+        let legacy = r#"{
+            "version": 1,
+            "tasks": [
+                {
+                    "id": 1,
+                    "title": "Old task",
+                    "description": null,
+                    "category_id": 0,
+                    "completed": false,
+                    "priority": "Medium",
+                    "due_date": null,
+                    "order": 0,
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "updated_at": "2025-01-01T00:00:00Z"
+                }
+            ],
+            "categories": [],
+            "config": {},
+            "last_sync": "2025-01-01T00:00:00Z"
+        }"#;
+        fs::write(&json_path, legacy).unwrap();
+
+        let loaded = JsonStorage::new(&json_path).load().unwrap();
+        assert_eq!(loaded.tasks.len(), 1);
+        assert_eq!(loaded.tasks[0].deleted_at, None);
+        assert!(!loaded.tasks[0].is_deleted());
+    }
 }

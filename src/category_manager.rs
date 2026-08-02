@@ -14,6 +14,29 @@ use chrono::Utc;
 pub const UNCATEGORIZED_ID: u64 = 0;
 const UNCATEGORIZED_NAME: &str = "Uncategorized";
 
+/// Builds the synthesized "Uncategorized" category. It is never a real row
+/// in storage (`get_next_category_id` never hands out ID 0), so every place
+/// that needs to represent it - `list_categories` below, and
+/// `get_category`/`get_category_by_name` for task commands resolving
+/// `--category Uncategorized` / `--category 0` - builds it from this one
+/// place rather than duplicating the literal.
+fn uncategorized_category() -> Category {
+    Category {
+        id: UNCATEGORIZED_ID,
+        name: UNCATEGORIZED_NAME.to_string(),
+        description: None,
+        order: 0,
+        created_at: Utc::now(),
+    }
+}
+
+/// Whether `name` collides with the synthesized "Uncategorized" category.
+/// Case-insensitive, matching the duplicate-name rule applied to real
+/// categories.
+fn is_reserved_category_name(name: &str) -> bool {
+    name.trim().eq_ignore_ascii_case(UNCATEGORIZED_NAME)
+}
+
 pub struct CategoryManager<'a> {
     storage: &'a dyn Storage,
     current_category: Option<u64>,
@@ -35,6 +58,16 @@ impl<'a> CategoryManager<'a> {
     ) -> Result<u64, CategoryError> {
         let mut category = Category::new(name.clone(), description)?;
         let mut data = self.storage.load()?;
+
+        // "Uncategorized" is synthesized rather than stored, so it is absent
+        // from the duplicate scan below and would otherwise be creatable as a
+        // real, separate category. That is worse than a cosmetic duplicate in
+        // `category list`: name lookups resolve the synthesized ID 0 first
+        // (see `get_category_by_name`), so the real one could never be
+        // targeted by name again.
+        if is_reserved_category_name(&name) {
+            return Err(CategoryError::DuplicateName(name));
+        }
 
         // Check for duplicate names
         if data
@@ -113,6 +146,12 @@ impl<'a> CategoryManager<'a> {
     ) -> Result<(), StorageError> {
         let mut data = self.storage.load()?;
 
+        // Renaming onto the synthesized category's name has the same problem
+        // as creating it outright - see `add_category`.
+        if is_reserved_category_name(&new_name) {
+            return Err(StorageError::DuplicateCategory(new_name));
+        }
+
         // Check for duplicate names
         if data
             .categories
@@ -144,13 +183,7 @@ impl<'a> CategoryManager<'a> {
         // Drop any stored category that collides with the magic ID, then
         // synthesize "Uncategorized" so it is always present and always first.
         categories.retain(|c| c.id != UNCATEGORIZED_ID);
-        categories.push(Category {
-            id: UNCATEGORIZED_ID,
-            name: UNCATEGORIZED_NAME.to_string(),
-            description: None,
-            order: 0,
-            created_at: Utc::now(),
-        });
+        categories.push(uncategorized_category());
 
         // Sort by order first, then by name
         categories.sort_by(|a, b| a.order.cmp(&b.order).then(a.name.cmp(&b.name)));
@@ -186,11 +219,34 @@ impl<'a> CategoryManager<'a> {
         Some(self.current_category.unwrap_or(UNCATEGORIZED_ID))
     }
 
+    /// Whether a category context has actually been set via `category use`,
+    /// as distinct from `get_current_category`'s "nothing set -> defaults to
+    /// Uncategorized" fallback. Task commands that need an *explicit*
+    /// context (`check all`/`uncheck all`, the simple `move` syntax) rely on
+    /// this distinction: silently falling back to Uncategorized here would
+    /// mean operating on the wrong tasks whenever the user simply never
+    /// picked a context, rather than telling them to set one.
+    pub fn has_explicit_category_context(&self) -> bool {
+        self.current_category.is_some()
+    }
+
+    /// Looks up a category by name, including the synthesized "Uncategorized"
+    /// category - it is never a real row in storage, so without this
+    /// special case task commands would have no way to target it via
+    /// `--category Uncategorized`.
     pub fn get_category_by_name(&self, name: &str) -> Result<Option<Category>, StorageError> {
+        if name.eq_ignore_ascii_case(UNCATEGORIZED_NAME) {
+            return Ok(Some(uncategorized_category()));
+        }
         self.storage.get_category_by_name(name)
     }
 
+    /// Looks up a category by ID, including the synthesized "Uncategorized"
+    /// category (ID 0) - see `get_category_by_name`.
     pub fn get_category(&self, id: u64) -> Result<Option<Category>, StorageError> {
+        if id == UNCATEGORIZED_ID {
+            return Ok(Some(uncategorized_category()));
+        }
         self.storage.get_category(id)
     }
 
@@ -439,5 +495,71 @@ mod tests {
         // The freed ID 2 is handed out again rather than jumping to 4.
         let d = manager.add_category("D".to_string(), None).unwrap();
         assert_eq!(d, 2);
+    }
+
+    /// `Uncategorized` is never a real row in storage, but task commands
+    /// need to be able to resolve `--category Uncategorized` / `--category
+    /// 0` the same way they resolve any real category name or ID.
+    #[test]
+    fn get_category_resolves_the_synthesized_uncategorized_category() {
+        let test_storage = TestStorage::new();
+        let manager = CategoryManager::new(test_storage.storage());
+
+        let by_id = manager.get_category(UNCATEGORIZED_ID).unwrap().unwrap();
+        assert_eq!(by_id.name, "Uncategorized");
+
+        let by_name = manager
+            .get_category_by_name("uncategorized")
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_name.id, UNCATEGORIZED_ID);
+    }
+
+    /// The synthesized "Uncategorized" category is not a stored row, so the
+    /// duplicate-name scan cannot see it. Without an explicit guard a user
+    /// could create a *second*, real category with that name - and because
+    /// `get_category_by_name` resolves the synthesized ID 0 first, the real
+    /// one would be permanently unreachable by name (verified against the
+    /// built binary before this guard existed: `category add Uncategorized`
+    /// succeeded with ID 1, `category list` showed the name twice, and
+    /// `add <task> --category Uncategorized` silently targeted ID 0).
+    #[test]
+    fn uncategorized_name_is_reserved() {
+        let test_storage = TestStorage::new();
+        let mut manager = CategoryManager::new(test_storage.storage());
+
+        assert!(manager
+            .add_category("Uncategorized".to_string(), None)
+            .is_err());
+        // Case- and whitespace-insensitively, matching the duplicate rule.
+        assert!(manager
+            .add_category("  uncategorized ".to_string(), None)
+            .is_err());
+
+        // Only the synthesized entry exists.
+        let categories = manager.list_categories().unwrap();
+        assert_eq!(categories.len(), 1);
+        assert_eq!(categories[0].id, UNCATEGORIZED_ID);
+
+        // Renaming onto it is refused for the same reason.
+        let id = manager.add_category("Work".to_string(), None).unwrap();
+        assert!(manager
+            .update_category(id, "Uncategorized".to_string())
+            .is_err());
+    }
+
+    /// `has_explicit_category_context` must not be fooled by
+    /// `get_current_category`'s "nothing set" fallback to Uncategorized.
+    #[test]
+    fn has_explicit_category_context_distinguishes_unset_from_uncategorized_fallback() {
+        let test_storage = TestStorage::new();
+        let mut manager = CategoryManager::new(test_storage.storage());
+
+        assert!(!manager.has_explicit_category_context());
+        assert_eq!(manager.get_current_category(), Some(UNCATEGORIZED_ID));
+
+        let id = manager.add_category("Work".to_string(), None).unwrap();
+        manager.use_category(id).unwrap();
+        assert!(manager.has_explicit_category_context());
     }
 }

@@ -103,21 +103,79 @@ fn validate_lifespan(value: &str) -> Result<u32, ConfigError> {
     })
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+// A `Config` value is used to represent two conceptually different things,
+// and keeping them straight is the whole point of this module:
+//
+// - "stored" config: what is actually written in `trtodo-config.json`. A
+//   `None` field here means *unset* - the user (or a fresh install) never
+//   wrote anything for it. This is what `ConfigStorage::load()` returns and
+//   what `config list`'s `*` markers are computed from.
+// - "effective" config: the stored value if present, otherwise the
+//   documented default from the README's configuration table. This is what
+//   callers that actually need a usable value (`ConfigManager::get`, and
+//   through it `open_storage`) should read.
+//
+// `#[serde(default)]` (rather than a `default = "..."` helper) makes an
+// absent key deserialize to `None`, i.e. "unset" - it does NOT fill in the
+// documented default. `skip_serializing_if` is the other half: without it,
+// serializing a `None` field writes an explicit JSON `null`, and on the
+// *next* load that key is present, so serde uses the `null` instead of ever
+// consulting a default. Together they let "never written" and "written as
+// null" collapse into the same, correct "unset" state on every read.
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
-    #[serde(default = "default_deleted_task_lifespan")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted_task_lifespan: Option<u32>,
-    #[serde(default = "default_storage_type")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_type: Option<String>,
-    #[serde(default = "default_storage_path")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_category: Option<String>,
-    #[serde(default = "default_priority")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_priority: Option<String>,
 }
 
 impl Config {
+    /// A config where nothing has ever been stored: every field is `None`.
+    ///
+    /// This is the honest representation for "no config file exists yet" /
+    /// "the config file is empty" (see `ConfigStorage::load`), and for the
+    /// vestigial `config` field embedded in the task-data file
+    /// (`StorageData`), which isn't the real config store and should never
+    /// be populated with resolved defaults.
+    ///
+    /// Deliberately distinct from `Config::default()`: collapsing "unset"
+    /// and "documented default" into one value is exactly the bug in issue
+    /// #22 (it makes `config list` unable to tell "you set this" from "this
+    /// is a fallback").
+    pub fn unset() -> Self {
+        Self {
+            deleted_task_lifespan: None,
+            storage_type: None,
+            storage_path: None,
+            default_category: None,
+            default_priority: None,
+        }
+    }
+
+    /// Resolves every unset field to its documented default, leaving any
+    /// explicitly-stored value untouched. Used by `ConfigManager::get` (and
+    /// transitively `main::open_storage`), which need a usable value rather
+    /// than a raw, possibly-absent one.
+    fn with_effective_defaults(&self) -> Self {
+        let defaults = Self::default();
+        Self {
+            deleted_task_lifespan: self
+                .deleted_task_lifespan
+                .or(defaults.deleted_task_lifespan),
+            storage_type: self.storage_type.clone().or(defaults.storage_type),
+            storage_path: self.storage_path.clone().or(defaults.storage_path),
+            default_category: self.default_category.clone().or(defaults.default_category),
+            default_priority: self.default_priority.clone().or(defaults.default_priority),
+        }
+    }
+
     fn validate(&self) -> Result<(), ConfigError> {
         if let Some(ref storage_type) = self.storage_type {
             validate_storage_type(storage_type)?;
@@ -132,6 +190,23 @@ impl Config {
     }
 }
 
+/// The single source of truth for the documented defaults from the README's
+/// configuration table. `with_effective_defaults`, `ConfigManager::get`, and
+/// `ConfigManager::list`'s fallback values all go through this - none of
+/// them hardcode a default value of their own.
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            deleted_task_lifespan: default_deleted_task_lifespan(),
+            storage_type: default_storage_type(),
+            storage_path: default_storage_path(),
+            // `default-category` has no documented default (README: `null`).
+            default_category: None,
+            default_priority: default_priority(),
+        }
+    }
+}
+
 fn default_deleted_task_lifespan() -> Option<u32> {
     Some(0)
 }
@@ -140,14 +215,17 @@ fn default_storage_type() -> Option<String> {
     Some("json".to_string())
 }
 
+/// Degrades to `None` (rather than panicking) when the home directory can't
+/// be determined, e.g. in a test/CI environment with `$HOME` pointed at a
+/// nonexistent path. `Config::default()` is now reachable from many more
+/// places than before this fix, so a panic here would be much easier to hit.
 fn default_storage_path() -> Option<String> {
-    let home = dirs::home_dir().expect("Could not determine home directory");
-    Some(
+    dirs::home_dir().map(|home| {
         home.join(".config")
             .join("trtodo")
             .to_string_lossy()
-            .to_string(),
-    )
+            .to_string()
+    })
 }
 
 fn default_priority() -> Option<String> {
@@ -174,17 +252,6 @@ impl ConfigManager {
         let storage =
             ConfigStorage::new(&config_path).map_err(|e| ConfigError::Storage(e.to_string()))?;
         let storage = Box::new(storage);
-        let data = crate::models::StorageData {
-            version: 1,
-            tasks: Vec::new(),
-            categories: Vec::new(),
-            config: crate::config::Config::default(),
-            current_category: None,
-            last_sync: chrono::Utc::now(),
-        };
-        let config = data.config;
-
-        config.validate()?;
 
         Ok(Self {
             storage,
@@ -197,7 +264,7 @@ impl ConfigManager {
             version: 1,
             tasks: Vec::new(),
             categories: Vec::new(),
-            config: self.get_config().clone(),
+            config: self.stored_config(),
             current_category: None,
             last_sync: chrono::Utc::now(),
         };
@@ -206,9 +273,13 @@ impl ConfigManager {
             .map_err(|e| ConfigError::Storage(e.to_string()))
     }
 
+    /// Returns the *effective* value for `key`: whatever is stored, or the
+    /// documented default if nothing was ever set. This is what callers that
+    /// need a usable value (like `main::open_storage`, which picks the
+    /// storage backend and path) should call.
     #[allow(dead_code)]
     pub fn get(&self, key: &str) -> Option<String> {
-        let config = self.get_config();
+        let config = self.effective_config();
         match key {
             "deleted-task-lifespan" => config.deleted_task_lifespan.map(|v| v.to_string()),
             "storage.type" => config.storage_type.map(|v| v.to_string()),
@@ -263,7 +334,11 @@ impl ConfigManager {
     }
 
     pub fn unset(&mut self, key: &str) -> Result<(), ConfigError> {
-        let mut config = self.get_config();
+        // Operate on the *stored* config, not the effective one - clearing a
+        // field should make it unset (and therefore fall back to the
+        // documented default again), not re-write whatever the effective
+        // value happened to be.
+        let mut config = self.stored_config();
         match key {
             "deleted-task-lifespan" => config.deleted_task_lifespan = None,
             "storage.type" => config.storage_type = None,
@@ -279,46 +354,52 @@ impl ConfigManager {
     }
 
     pub fn list(&self) -> Vec<(String, String, bool)> {
-        let config = self.get_config();
+        // "Is this a default" comes from the *stored* config (was the field
+        // ever set?); the printed value comes from the *effective* config
+        // (resolved through the same documented defaults as `get`). Neither
+        // is hardcoded here - `default-category` legitimately prints `null`
+        // simply because it has no `default_*()` helper to fall back to.
+        let stored = self.stored_config();
+        let effective = stored.with_effective_defaults();
         vec![
             (
                 "deleted-task-lifespan".to_string(),
-                config
+                effective
                     .deleted_task_lifespan
-                    .map_or_else(|| "0".to_string(), |v| v.to_string()),
-                config.deleted_task_lifespan.is_none(),
+                    .map_or_else(|| "null".to_string(), |v| v.to_string()),
+                stored.deleted_task_lifespan.is_none(),
             ),
             (
                 "storage.type".to_string(),
-                config
+                effective
                     .storage_type
                     .clone()
                     .unwrap_or_else(|| "null".to_string()),
-                config.storage_type.is_none(),
+                stored.storage_type.is_none(),
             ),
             (
                 "storage.path".to_string(),
-                config
+                effective
                     .storage_path
                     .clone()
                     .unwrap_or_else(|| "null".to_string()),
-                config.storage_path.is_none(),
+                stored.storage_path.is_none(),
             ),
             (
                 "default-category".to_string(),
-                config
+                effective
                     .default_category
                     .clone()
                     .unwrap_or_else(|| "null".to_string()),
-                config.default_category.is_none(),
+                stored.default_category.is_none(),
             ),
             (
                 "default-priority".to_string(),
-                config
+                effective
                     .default_priority
                     .clone()
                     .unwrap_or_else(|| "null".to_string()),
-                config.default_priority.is_none(),
+                stored.default_priority.is_none(),
             ),
         ]
     }
@@ -329,7 +410,7 @@ impl ConfigManager {
             && self.old_storage_type.as_ref()
                 != Some(
                     &self
-                        .get_config()
+                        .stored_config()
                         .storage_type
                         .as_ref()
                         .cloned()
@@ -342,7 +423,7 @@ impl ConfigManager {
         self.old_storage_type.as_ref().map(|old_type| {
             (
                 old_type.clone(),
-                self.get_config()
+                self.stored_config()
                     .storage_type
                     .as_ref()
                     .cloned()
@@ -351,8 +432,15 @@ impl ConfigManager {
         })
     }
 
-    fn get_config(&self) -> Config {
+    /// The raw, on-disk config: `None` fields are genuinely unset.
+    fn stored_config(&self) -> Config {
         self.storage.load().unwrap().config
+    }
+
+    /// The stored config with unset fields resolved to their documented
+    /// defaults.
+    fn effective_config(&self) -> Config {
+        self.stored_config().with_effective_defaults()
     }
 }
 
@@ -396,17 +484,27 @@ mod tests {
         assert_eq!(manager.get("default-category"), None);
     }
 
+    // Previously asserted `None` for every key on a fresh config file - that
+    // encoded the issue #22 bug (documented defaults were never applied).
+    // `ConfigManager::get` returns the *effective* value, so a fresh install
+    // must report the README's documented defaults, not `None`.
+    // `default-category` has no documented default, so `None` there is
+    // still correct.
     #[test]
     fn test_config_manager_defaults() {
         let temp_file = NamedTempFile::new().unwrap();
         let manager = ConfigManager::new(Some(temp_file.path())).unwrap();
 
-        assert_eq!(manager.get("deleted-task-lifespan"), None);
-        assert_eq!(manager.get("storage.type"), None);
+        assert_eq!(manager.get("deleted-task-lifespan"), Some("0".to_string()));
+        assert_eq!(manager.get("storage.type"), Some("json".to_string()));
         assert_eq!(manager.get("default-category"), None);
-        assert_eq!(manager.get("default-priority"), None);
+        assert_eq!(manager.get("default-priority"), Some("medium".to_string()));
     }
 
+    // Previously only asserted that every key reports as a default (still
+    // true - nothing has been set), but not *what* the printed value is,
+    // which is exactly what issue #22 got wrong (the value was `null`
+    // instead of the documented default).
     #[test]
     fn test_config_manager_list() {
         let temp_file = NamedTempFile::new().unwrap();
@@ -415,5 +513,67 @@ mod tests {
         let list = manager.list();
         assert_eq!(list.len(), 5);
         assert!(list.iter().all(|(_, _, is_default)| *is_default));
+
+        let value_of = |key: &str| list.iter().find(|(k, _, _)| k == key).unwrap().1.clone();
+        assert_eq!(value_of("deleted-task-lifespan"), "0");
+        assert_eq!(value_of("storage.type"), "json");
+        assert_eq!(value_of("default-category"), "null");
+        assert_eq!(value_of("default-priority"), "medium");
+    }
+
+    /// Regression test for issue #22's second, easier-to-miss half: once
+    /// *any* key has been `set`, the config file exists and every other key
+    /// must still report as a default on the next load - not as an explicit
+    /// `null` that beats the `#[serde(default)]` helper. A bare `impl
+    /// Default for Config` (without `skip_serializing_if`) passes
+    /// `test_config_manager_defaults` above but fails this one.
+    #[test]
+    fn test_untouched_keys_stay_default_after_a_set_and_reload() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let config_path = temp_file.path().to_path_buf();
+
+        let mut manager = ConfigManager::new(Some(&config_path)).unwrap();
+        manager.set("default-priority", "high").unwrap();
+
+        // Simulate the next process invocation (e.g. `config list` running
+        // after a `config set`) by loading a fresh `ConfigManager`.
+        let manager = ConfigManager::new(Some(&config_path)).unwrap();
+        let list = manager.list();
+        let entry = |key: &str| list.iter().find(|(k, _, _)| k == key).unwrap().clone();
+
+        let (_, value, is_default) = entry("default-priority");
+        assert_eq!(value, "high");
+        assert!(!is_default);
+
+        for key in [
+            "deleted-task-lifespan",
+            "storage.type",
+            "storage.path",
+            "default-category",
+        ] {
+            let (_, _, is_default) = entry(key);
+            assert!(is_default, "{key} should still be a default");
+        }
+        assert_eq!(entry("deleted-task-lifespan").1, "0");
+        assert_eq!(entry("storage.type").1, "json");
+    }
+
+    /// `Config::default()` (the documented, *effective* defaults) and
+    /// `Config::unset()` (nothing stored yet) must never collapse into the
+    /// same value - doing so is exactly the bug in issue #22.
+    #[test]
+    fn test_default_and_unset_are_distinct() {
+        let defaults = Config::default();
+        assert_eq!(defaults.deleted_task_lifespan, Some(0));
+        assert_eq!(defaults.storage_type, Some("json".to_string()));
+        assert_eq!(defaults.default_priority, Some("medium".to_string()));
+        assert_eq!(defaults.default_category, None); // no documented default
+
+        let unset = Config::unset();
+        assert_eq!(unset.deleted_task_lifespan, None);
+        assert_eq!(unset.storage_type, None);
+        assert_eq!(unset.storage_path, None);
+        assert_eq!(unset.default_category, None);
+        assert_eq!(unset.default_priority, None);
     }
 }
