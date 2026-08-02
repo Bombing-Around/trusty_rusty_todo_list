@@ -143,6 +143,10 @@ pub enum CategoryError {
     EmptyName,
     #[error("Category name already exists: {0}")]
     DuplicateName(String),
+    #[error("Category not found: {0}")]
+    NotFound(String),
+    #[error(transparent)]
+    Storage(#[from] StorageError),
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
@@ -189,6 +193,12 @@ pub struct StorageData {
     pub tasks: Vec<Task>,
     pub categories: Vec<Category>,
     pub config: Config,
+    /// The category context selected via `category use`, persisted between runs.
+    ///
+    /// `#[serde(default)]` keeps on-disk data written before this field existed
+    /// loadable - it simply comes back as "no category selected".
+    #[serde(default)]
+    pub current_category: Option<u64>,
     pub last_sync: DateTime<Utc>,
 }
 
@@ -199,6 +209,7 @@ impl StorageData {
             tasks: Vec::new(),
             categories: Vec::new(),
             config: Config::default(),
+            current_category: None,
             last_sync: Utc::now(),
         }
     }

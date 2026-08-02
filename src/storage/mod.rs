@@ -7,7 +7,7 @@ pub mod json;
 pub mod sqlite;
 
 #[cfg(test)]
-mod test_utils {}
+pub mod test_utils;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
@@ -132,9 +132,29 @@ pub trait Storage {
         Ok(data.tasks.iter().map(|t| t.id).max().unwrap_or(0) + 1)
     }
 
+    /// Returns the lowest unused category ID, starting from 1.
+    ///
+    /// Unlike `get_next_task_id`, this deliberately fills gaps rather than
+    /// always handing out `max + 1`: the README specifies that "when deleting a
+    /// category it is removed and its ID is made available again" (issue #16).
+    /// ID 0 is never returned - it is reserved for the magic "Uncategorized"
+    /// category.
     fn get_next_category_id(&self) -> Result<u64, StorageError> {
         let data = self.load()?;
-        Ok(data.categories.iter().map(|c| c.id).max().unwrap_or(0) + 1)
+        let mut used_ids: Vec<u64> = data.categories.iter().map(|c| c.id).collect();
+        used_ids.sort_unstable();
+
+        let mut next_id = 1;
+        for id in used_ids {
+            if id > next_id {
+                break;
+            }
+            if id == next_id {
+                next_id = id + 1;
+            }
+        }
+
+        Ok(next_id)
     }
 
     // Additional convenience methods for README behaviors

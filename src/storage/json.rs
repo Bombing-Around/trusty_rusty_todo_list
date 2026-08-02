@@ -188,4 +188,46 @@ mod tests {
         );
         assert!(first_category.get("description").is_some());
     }
+
+    /// The `category use` context must survive a save/load cycle, since it is
+    /// what makes the context persist between runs of the application.
+    #[test]
+    fn test_current_category_round_trip() {
+        let dir = tempdir().unwrap();
+        let json_path = dir.path().join("context.json");
+        let storage = JsonStorage::new(&json_path);
+
+        let mut data = create_test_data();
+        assert_eq!(data.current_category, None);
+        data.current_category = Some(7);
+        storage.save(&data).unwrap();
+
+        assert_eq!(storage.load().unwrap().current_category, Some(7));
+
+        // ... and clearing it round-trips too.
+        let mut data = storage.load().unwrap();
+        data.current_category = None;
+        storage.save(&data).unwrap();
+        assert_eq!(storage.load().unwrap().current_category, None);
+    }
+
+    /// Data written before `current_category` existed has no such key; it must
+    /// still load rather than failing deserialization.
+    #[test]
+    fn test_load_data_without_current_category_field() {
+        let dir = tempdir().unwrap();
+        let json_path = dir.path().join("legacy.json");
+
+        let legacy = r#"{
+            "version": 1,
+            "tasks": [],
+            "categories": [],
+            "config": {},
+            "last_sync": "2025-01-01T00:00:00Z"
+        }"#;
+        fs::write(&json_path, legacy).unwrap();
+
+        let loaded = JsonStorage::new(&json_path).load().unwrap();
+        assert_eq!(loaded.current_category, None);
+    }
 }
