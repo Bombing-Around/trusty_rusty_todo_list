@@ -128,7 +128,9 @@ impl SqliteStorage {
                 "UPDATE schema_version SET version = ?1 WHERE version < ?1",
                 params![SCHEMA_VERSION],
             )
-            .map_err(|e| StorageError::Storage(format!("Failed to update schema version: {}", e)))?;
+            .map_err(|e| {
+                StorageError::Storage(format!("Failed to update schema version: {}", e))
+            })?;
         }
 
         Ok(())
@@ -363,7 +365,10 @@ impl Storage for SqliteStorage {
             version: 1,
             tasks,
             categories,
-            config: crate::config::Config::default(),
+            // Vestigial field - see the comment on `StorageData::new`. SQLite
+            // doesn't store config data either, so "nothing stored" is the
+            // honest value.
+            config: crate::config::Config::unset(),
             current_category,
             last_sync: Utc::now(),
         };

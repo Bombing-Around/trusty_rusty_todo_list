@@ -239,7 +239,13 @@ impl StorageData {
             version: 1,
             tasks: Vec::new(),
             categories: Vec::new(),
-            config: Config::default(),
+            // The `config` field embedded in the task-data file is
+            // vestigial - the real config lives in `trtodo-config.json` via
+            // `ConfigStorage`. `Config::unset()` (nothing stored) is the
+            // honest value here; resolving it to the documented defaults
+            // would make this file start carrying a populated config blob
+            // it was never meant to own.
+            config: Config::unset(),
             current_category: None,
             last_sync: Utc::now(),
         }

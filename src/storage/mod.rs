@@ -457,8 +457,13 @@ mod tests {
             .add_category("Work".to_string(), None)
             .expect("Failed to add category");
 
-        let mut task =
-            Task::new("Finish report".to_string(), category_id, None, Priority::Medium).unwrap();
+        let mut task = Task::new(
+            "Finish report".to_string(),
+            category_id,
+            None,
+            Priority::Medium,
+        )
+        .unwrap();
         task.id = storage.get_next_task_id().unwrap();
         storage.add_task(task).unwrap();
 
@@ -499,8 +504,13 @@ mod tests {
         assert_ne!(category_id, 0);
         storage.add_category(category).unwrap();
 
-        let mut task =
-            Task::new("Finish report".to_string(), category_id, None, Priority::Medium).unwrap();
+        let mut task = Task::new(
+            "Finish report".to_string(),
+            category_id,
+            None,
+            Priority::Medium,
+        )
+        .unwrap();
         task.id = storage.get_next_task_id().unwrap();
         let task_id = task.id;
         storage.add_task(task).unwrap();
@@ -515,7 +525,10 @@ mod tests {
         );
         assert!(deleted[0].deleted_at.is_some());
 
-        assert!(storage.get_tasks_by_category(category_id).unwrap().is_empty());
+        assert!(storage
+            .get_tasks_by_category(category_id)
+            .unwrap()
+            .is_empty());
         assert!(storage.search_tasks("report").unwrap().is_empty());
         assert!(storage.get_all_tasks().unwrap().is_empty());
 
@@ -561,8 +574,8 @@ mod tests {
 
         let now = Utc::now();
 
-        let mut old_task = Task::new("Old deleted task".to_string(), 0, None, Priority::Low)
-            .unwrap();
+        let mut old_task =
+            Task::new("Old deleted task".to_string(), 0, None, Priority::Low).unwrap();
         old_task.id = storage.get_next_task_id().unwrap();
         old_task.deleted_at = Some(now - chrono::Duration::days(10));
         // Recently touched, but that must not matter: it was deleted 10 days
@@ -571,8 +584,8 @@ mod tests {
         let old_task_id = old_task.id;
         storage.add_task(old_task).unwrap();
 
-        let mut recent_task = Task::new("Recently deleted task".to_string(), 0, None, Priority::Low)
-            .unwrap();
+        let mut recent_task =
+            Task::new("Recently deleted task".to_string(), 0, None, Priority::Low).unwrap();
         recent_task.id = storage.get_next_task_id().unwrap();
         recent_task.deleted_at = Some(now - chrono::Duration::days(1));
         // Stale `updated_at`, but that must not matter either: it was only
