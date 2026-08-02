@@ -305,14 +305,62 @@ mod tests {
 
     #[test]
     fn test_storage_creation() {
-        let temp_file = NamedTempFile::new().unwrap();
-
-        // Test JSON storage creation
-        let json_storage = create_storage(StorageType::Json, temp_file.path()).unwrap();
+        // Each backend gets its own independent temp file. Pointing both backends
+        // at the *same* path (as this test used to do) doesn't verify backend
+        // interoperability - it just happens to pass because JsonStorage::load()
+        // never writes, leaving the file at zero length, and an empty file is a
+        // valid (empty) SQLite database. See test_sqlite_rejects_json_populated_file
+        // below for the actual cross-backend scenario.
+        let json_temp_file = NamedTempFile::new().unwrap();
+        let json_storage = create_storage(StorageType::Json, json_temp_file.path()).unwrap();
         assert!(json_storage.load().is_ok());
 
-        // Test SQLite storage creation
-        let sqlite_storage = create_storage(StorageType::Sqlite, temp_file.path()).unwrap();
+        let sqlite_temp_file = NamedTempFile::new().unwrap();
+        let sqlite_storage = create_storage(StorageType::Sqlite, sqlite_temp_file.path()).unwrap();
         assert!(sqlite_storage.load().is_ok());
+    }
+
+    /// Encodes the requirement from issue #17: switching storage backends against
+    /// a file that already holds data in a *different* backend's format must fail
+    /// gracefully with a typed `StorageError`, not panic and not silently succeed
+    /// with wrong/empty data.
+    ///
+    /// NOTE: for this specific direction (SQLite opened against a file already
+    /// populated by the JSON backend), this currently passes: SQLite's own
+    /// on-disk header check inside `execute_batch` rejects the file with
+    /// "file is not a database" before any table is created, which
+    /// `SqliteStorage::new` surfaces as `StorageError::Storage`, not a panic and
+    /// not silent success/corruption (verified: the original JSON file is left
+    /// byte-for-byte intact and still loads correctly afterwards). This is not a
+    /// deliberate validation in this codebase, though - it's an accidental
+    /// byproduct of the SQLite file format having a magic header. There is no
+    /// equivalent protection in the *other* direction (JSON backend silently
+    /// overwriting an existing SQLite file via `std::fs::write` with no format
+    /// check at all), and there is no format check at all for two files that
+    /// both happen to satisfy their respective format's parser. #17 should stay
+    /// open for that gap; this test just pins down the one direction that
+    /// already behaves correctly today so a future regression is caught.
+    #[test]
+    fn test_sqlite_rejects_json_populated_file() {
+        let temp_file = NamedTempFile::new().unwrap();
+
+        // Populate the file with real data through the JSON backend.
+        let json_storage = create_storage(StorageType::Json, temp_file.path()).unwrap();
+        let mut data = StorageData::new();
+        let category = Category::new("Work".to_string(), None).unwrap();
+        data.categories.push(category.clone());
+        let task = Task::new("Test task".to_string(), category.id, None, Priority::Medium).unwrap();
+        data.tasks.push(task);
+        json_storage.save(&data).unwrap();
+
+        // Pointing SQLite storage at a file that already holds non-SQLite (JSON)
+        // data must be rejected gracefully with a typed StorageError - never a
+        // panic, and never a silent success that hides or discards the existing
+        // data.
+        let result = create_storage(StorageType::Sqlite, temp_file.path());
+        assert!(
+            result.is_err(),
+            "expected a graceful StorageError when opening a JSON-populated file as SQLite, got Ok(..)"
+        );
     }
 }
