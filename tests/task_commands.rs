@@ -185,11 +185,14 @@ fn check_and_uncheck_by_explicit_category_and_by_context() {
     let out = trtodo.ok(&["list"]);
     assert!(out.contains("[x] Buy milk"), "{out}");
 
-    // Without --category and without a context, this must be a clean
-    // error, not a silent fallback to Uncategorized.
+    // Without --category and without a context, resolution now searches
+    // unscoped across every category (README's cross-category matching)
+    // instead of erroring - and since "Buy milk" is unambiguous here (it
+    // only exists in Work), that succeeds cleanly rather than requiring a
+    // context.
     trtodo.ok(&["category", "clear"]);
-    let err = trtodo.fail(&["check", "Buy milk"]);
-    assert!(err.contains("no category context"), "{err}");
+    let out = trtodo.ok(&["check", "Buy milk"]);
+    assert!(out.contains("checked off"), "{out}");
 }
 
 #[test]
@@ -356,6 +359,34 @@ fn same_task_name_in_one_category_without_a_terminal_is_a_clean_error() {
 
     // The task ID still works to disambiguate directly.
     let out = trtodo.ok(&["check", "2", "--category", "Work"]);
+    assert!(out.contains("checked off"), "{out}");
+}
+
+#[test]
+fn same_task_name_across_categories_with_no_context_reaches_the_disambiguation_prompt() {
+    let trtodo = Trtodo::new();
+    trtodo.ok(&["category", "add", "Work"]);
+    trtodo.ok(&["category", "add", "Home"]);
+    trtodo.ok(&["add", "Call mom", "--category", "Work"]);
+    trtodo.ok(&["add", "Call mom", "--category", "Home"]);
+
+    // No --category and no context set: resolution is unscoped across every
+    // category, so the two same-named tasks in different categories collide
+    // - this is the README's cross-category disambiguation path, previously
+    // unreachable because these commands always required a category scope.
+    // The test harness has no real terminal attached, so the prompt
+    // surfaces as a clean `PromptError::NotInteractive`, not `NoCategoryContext`.
+    let err = trtodo.fail(&["check", "Call mom"]);
+    assert!(err.contains("no terminal is attached"), "{err}");
+
+    let err = trtodo.fail(&["delete", "Call mom"]);
+    assert!(err.contains("no terminal is attached"), "{err}");
+
+    let err = trtodo.fail(&["update", "Call mom", "--to", "Call dad"]);
+    assert!(err.contains("no terminal is attached"), "{err}");
+
+    // The task ID still disambiguates directly, with no category needed.
+    let out = trtodo.ok(&["check", "1"]);
     assert!(out.contains("checked off"), "{out}");
 }
 

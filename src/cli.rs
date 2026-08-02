@@ -43,9 +43,11 @@ pub enum Commands {
     Delete {
         /// Title or ID of the task
         title_or_id: String,
-        /// Category name or ID
+        /// Category name or ID. Omit to search the current category context,
+        /// or every category if no context is set (prompting if the title is
+        /// ambiguous).
         #[arg(short = 'c', long = "category")]
-        category: String,
+        category: Option<String>,
     },
     /// Update a task
     Update {
@@ -54,9 +56,11 @@ pub enum Commands {
         /// New title for the task
         #[arg(short = 't', long = "to")]
         new_title: String,
-        /// Category name or ID
+        /// Category name or ID. Omit to search the current category context,
+        /// or every category if no context is set (prompting if the title is
+        /// ambiguous).
         #[arg(short = 'c', long = "category")]
-        category: String,
+        category: Option<String>,
     },
     /// Check off a task
     #[command(alias = "x", alias = "mark")]

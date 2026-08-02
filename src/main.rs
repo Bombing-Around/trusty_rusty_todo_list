@@ -308,17 +308,28 @@ fn resolve_default_priority(config_manager: &ConfigManager) -> Result<Priority, 
     Ok(Priority::from_str(&value)?)
 }
 
-/// Resolves the category a `Check`/`Uncheck` invocation should operate in:
-/// the explicit `--category` if given, otherwise the current category
-/// context (README: "commands that require category specification can omit
-/// the --category argument" once a context is set).
-fn resolve_task_category(
+/// Resolves the scope `Delete`, `Update`, `Check`, and `Uncheck` should
+/// search within, per the README: the explicit `--category` if given,
+/// otherwise the current category context if one has been set via `category
+/// use`, otherwise unscoped (`None`) - meaning search every category and let
+/// `TaskManager::resolve_task`'s "same name in multiple categories, prompt
+/// the user" rule fire if the title turns out to be ambiguous.
+///
+/// Unlike `require_category_context`, an unset context here is *not* an
+/// error: these four commands all take a task reference to disambiguate
+/// with (unlike `CheckAll`/`UncheckAll`/simple `move`, which have nothing to
+/// disambiguate and so still require an explicit context via that
+/// function).
+fn resolve_task_scope(
     category_manager: &CategoryManager,
     category: Option<String>,
-) -> Result<u64, CliError> {
+) -> Result<Option<u64>, CliError> {
     match category {
-        Some(name) => Ok(resolve_category(category_manager, &name)?.id),
-        None => require_category_context(category_manager),
+        Some(name) => Ok(Some(resolve_category(category_manager, &name)?.id)),
+        None if category_manager.has_explicit_category_context() => {
+            Ok(category_manager.get_current_category())
+        }
+        None => Ok(None),
     }
 }
 
@@ -396,8 +407,8 @@ fn run_task_command(
             title_or_id,
             category,
         } => {
-            let category = resolve_category(&category_manager, &category)?;
-            let task = task_manager.resolve_task(&title_or_id, Some(category.id), &mut prompter)?;
+            let scope = resolve_task_scope(&category_manager, category)?;
+            let task = task_manager.resolve_task(&title_or_id, scope, &mut prompter)?;
             task_manager.delete_task(task.id)?;
             println!("Task '{}' deleted", task.title);
         }
@@ -406,8 +417,8 @@ fn run_task_command(
             new_title,
             category,
         } => {
-            let category = resolve_category(&category_manager, &category)?;
-            let task = task_manager.resolve_task(&title_or_id, Some(category.id), &mut prompter)?;
+            let scope = resolve_task_scope(&category_manager, category)?;
+            let task = task_manager.resolve_task(&title_or_id, scope, &mut prompter)?;
             let old_title = task.title.clone();
             task_manager.rename_task(task, new_title.clone())?;
             println!("Task '{}' renamed to '{}'", old_title, new_title);
@@ -416,8 +427,8 @@ fn run_task_command(
             title_or_id,
             category,
         } => {
-            let category_id = resolve_task_category(&category_manager, category)?;
-            let task = task_manager.resolve_task(&title_or_id, Some(category_id), &mut prompter)?;
+            let scope = resolve_task_scope(&category_manager, category)?;
+            let task = task_manager.resolve_task(&title_or_id, scope, &mut prompter)?;
             let title = task.title.clone();
             task_manager.set_completed(task, true)?;
             println!("Task '{}' checked off", title);
@@ -426,8 +437,8 @@ fn run_task_command(
             title_or_id,
             category,
         } => {
-            let category_id = resolve_task_category(&category_manager, category)?;
-            let task = task_manager.resolve_task(&title_or_id, Some(category_id), &mut prompter)?;
+            let scope = resolve_task_scope(&category_manager, category)?;
+            let task = task_manager.resolve_task(&title_or_id, scope, &mut prompter)?;
             let title = task.title.clone();
             task_manager.set_completed(task, false)?;
             println!("Task '{}' unchecked", title);

@@ -291,6 +291,26 @@ mod tests {
     }
 
     #[test]
+    fn resolve_task_prompts_across_categories_when_unscoped() {
+        let test_storage = TestStorage::new();
+        let storage = test_storage.storage();
+        let manager = TaskManager::new(storage);
+        add_categories(storage, &["Work", "Home"]);
+        let _work_id = add(storage, "Buy milk", 1, Priority::Medium);
+        let home_id = add(storage, "Buy milk", 2, Priority::Medium);
+
+        // No category scope at all (`None`): this is the README's
+        // cross-category disambiguation - the same title exists in two
+        // different categories, so the prompter is consulted even though
+        // neither `--category` nor a context narrowed the search.
+        let mut prompter = ScriptedPrompter::new(vec![Ok(1)]);
+        let resolved = manager
+            .resolve_task("Buy milk", None, &mut prompter)
+            .unwrap();
+        assert_eq!(resolved.id, home_id);
+    }
+
+    #[test]
     fn resolve_task_prompts_when_multiple_matches_share_scope() {
         let test_storage = TestStorage::new();
         let storage = test_storage.storage();

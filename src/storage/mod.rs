@@ -61,19 +61,6 @@ pub trait Storage {
         self.save(&data)
     }
 
-    fn delete_category(&self, category_id: u64) -> Result<(), StorageError> {
-        let mut data = self.load()?;
-        // Check if category has any tasks
-        if data.tasks.iter().any(|t| t.category_id == category_id) {
-            return Err(StorageError::Storage(format!(
-                "Cannot delete category {}: it has associated tasks",
-                category_id
-            )));
-        }
-        data.categories.retain(|c| c.id != category_id);
-        self.save(&data)
-    }
-
     fn update_category(&self, category: Category) -> Result<(), StorageError> {
         let mut data = self.load()?;
         if let Some(existing_category) = data.categories.iter_mut().find(|c| c.id == category.id) {
