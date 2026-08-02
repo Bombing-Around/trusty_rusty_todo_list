@@ -179,6 +179,7 @@ impl ConfigManager {
             tasks: Vec::new(),
             categories: Vec::new(),
             config: crate::config::Config::default(),
+            current_category: None,
             last_sync: chrono::Utc::now(),
         };
         let config = data.config;
@@ -197,6 +198,7 @@ impl ConfigManager {
             tasks: Vec::new(),
             categories: Vec::new(),
             config: self.get_config().clone(),
+            current_category: None,
             last_sync: chrono::Utc::now(),
         };
         self.storage

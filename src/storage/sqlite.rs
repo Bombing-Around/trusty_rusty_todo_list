@@ -2,7 +2,7 @@ use super::Storage;
 use super::StorageError;
 use crate::models::{Category, Priority, StorageData, Task};
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (category_id) REFERENCES categories(id)
+);
+
+-- Holds the persisted `category use` context. At most one row; absence of a
+-- row means "no category selected".
+CREATE TABLE IF NOT EXISTS current_category (
+    id INTEGER PRIMARY KEY,
+    category_id INTEGER NOT NULL
 );
 "#;
 
@@ -132,6 +139,18 @@ impl Storage for SqliteStorage {
         // Clear existing data
         tx.execute("DELETE FROM tasks", [])?;
         tx.execute("DELETE FROM categories", [])?;
+        tx.execute("DELETE FROM current_category", [])?;
+
+        // Persist the selected category context, if any
+        if let Some(category_id) = data.current_category {
+            tx.execute(
+                "INSERT INTO current_category (id, category_id) VALUES (1, ?1)",
+                params![category_id],
+            )
+            .map_err(|e| {
+                StorageError::Storage(format!("Failed to save current category: {}", e))
+            })?;
+        }
 
         // Insert categories
         for category in &data.categories {
@@ -282,11 +301,24 @@ impl Storage for SqliteStorage {
             );
         }
 
+        // Load the persisted category context (at most one row)
+        let current_category = conn
+            .query_row(
+                "SELECT category_id FROM current_category LIMIT 1",
+                [],
+                |row| row.get::<_, u64>(0),
+            )
+            .optional()
+            .map_err(|e| {
+                StorageError::Storage(format!("Failed to read current category: {}", e))
+            })?;
+
         let data = StorageData {
             version: 1,
             tasks,
             categories,
             config: crate::config::Config::default(),
+            current_category,
             last_sync: Utc::now(),
         };
 
@@ -406,6 +438,28 @@ mod tests {
 
         let result = storage.load();
         assert!(result.is_err());
+    }
+
+    /// The `category use` context must survive a save/load cycle in the SQLite
+    /// backend too, not just JSON.
+    #[test]
+    fn test_current_category_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("context.db");
+        let storage = SqliteStorage::new(&db_path).unwrap();
+
+        let mut data = create_test_data();
+        assert_eq!(data.current_category, None);
+        data.current_category = Some(2);
+        storage.save(&data).unwrap();
+
+        assert_eq!(storage.load().unwrap().current_category, Some(2));
+
+        // ... and clearing it round-trips too.
+        let mut data = storage.load().unwrap();
+        data.current_category = None;
+        storage.save(&data).unwrap();
+        assert_eq!(storage.load().unwrap().current_category, None);
     }
 
     #[test]
