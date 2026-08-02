@@ -46,10 +46,13 @@ pub enum CliError {
     /// use`. `CheckAll`/`UncheckAll` and the simple `move` syntax have no
     /// `--category` argument at all, so with no context set there is no way
     /// to know which category they mean.
-    #[error(
-        "no category context is set; run 'category use <category>' first, or pass --category explicitly"
-    )]
-    NoCategoryContext,
+    ///
+    /// `hint` carries a command-specific alternative, because the commands
+    /// that hit this have different escape hatches - and notably none of
+    /// them accepts `--category`, so suggesting it (as this message once
+    /// did) is advice the user cannot act on.
+    #[error("no category context is set; run 'category use <category>' first{hint}")]
+    NoCategoryContext { hint: &'static str },
     /// `Move` accepts two distinct syntaxes (see the README) modelled as one
     /// `Commands::Move` variant with all-`Option` fields; any combination of
     /// arguments that isn't exactly one of those two syntaxes is rejected
@@ -342,15 +345,25 @@ fn resolve_task_scope(
 /// treating that as "the user wants Uncategorized" here would silently
 /// operate on the wrong tasks whenever the user simply forgot to set a
 /// context, instead of telling them to set one.
-fn require_category_context(category_manager: &CategoryManager) -> Result<u64, CliError> {
+/// `hint` is appended to the error when no context is set, so each caller can
+/// offer the escape hatch that actually applies to it.
+fn require_category_context(
+    category_manager: &CategoryManager,
+    hint: &'static str,
+) -> Result<u64, CliError> {
     if category_manager.has_explicit_category_context() {
         Ok(category_manager
             .get_current_category()
             .expect("has_explicit_category_context() true implies Some(..)"))
     } else {
-        Err(CliError::NoCategoryContext)
+        Err(CliError::NoCategoryContext { hint })
     }
 }
+
+/// `move`'s simple syntax needs a context, but its extended syntax names both
+/// categories outright and so needs none - worth pointing at.
+const MOVE_CONTEXT_HINT: &str =
+    ", or name the source explicitly with 'move --from <category> --task <task> --to <category>'";
 
 /// Resolves a category ID to a display name for output, special-casing the
 /// synthesized Uncategorized category the same way `CategoryCommands::Show`
@@ -444,12 +457,12 @@ fn run_task_command(
             println!("Task '{}' unchecked", title);
         }
         Commands::CheckAll => {
-            let category_id = require_category_context(&category_manager)?;
+            let category_id = require_category_context(&category_manager, "")?;
             let count = task_manager.set_all_completed(category_id, true)?;
             println!("Checked off {} task(s)", count);
         }
         Commands::UncheckAll => {
-            let category_id = require_category_context(&category_manager)?;
+            let category_id = require_category_context(&category_manager, "")?;
             let count = task_manager.set_all_completed(category_id, false)?;
             println!("Unchecked {} task(s)", count);
         }
@@ -467,7 +480,7 @@ fn run_task_command(
             let (task_ref, scope_category_id, target_category_id) =
                 match (task_name_or_id, to_category, from_category, task) {
                     (Some(task_ref), Some(to), None, None) => {
-                        let scope = require_category_context(&category_manager)?;
+                        let scope = require_category_context(&category_manager, MOVE_CONTEXT_HINT)?;
                         let target = resolve_category(&category_manager, &to)?.id;
                         (task_ref, scope, target)
                     }

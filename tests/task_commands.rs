@@ -207,6 +207,10 @@ fn check_all_and_uncheck_all_require_and_use_the_category_context() {
     // all, so this must fail cleanly rather than guess.
     let err = trtodo.fail(&["check-all"]);
     assert!(err.contains("no category context"), "{err}");
+    // The advice must be actionable: `check-all` accepts no --category, so
+    // the message must not tell the user to pass one (it used to).
+    assert!(err.contains("category use"), "{err}");
+    assert!(!err.contains("--category"), "{err}");
 
     trtodo.ok(&["category", "use", "Work"]);
     let out = trtodo.ok(&["check-all"]);
@@ -233,6 +237,10 @@ fn move_simple_syntax_uses_category_context() {
     // an explicit context first.
     let err = trtodo.fail(&["move", "Buy milk", "--to", "Home"]);
     assert!(err.contains("no category context"), "{err}");
+    // `move` has no --category either, but it does have an escape hatch the
+    // message should point at: the extended --from/--task form.
+    assert!(!err.contains("--category"), "{err}");
+    assert!(err.contains("--from"), "{err}");
 
     trtodo.ok(&["category", "use", "Work"]);
     let out = trtodo.ok(&["move", "Buy milk", "--to", "Home"]);
