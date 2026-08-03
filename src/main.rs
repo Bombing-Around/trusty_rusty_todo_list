@@ -11,7 +11,7 @@ use clap::Parser;
 use cli::{CategoryCommands, Cli, Commands, ConfigCommands, DeletedCommands};
 use config::{ConfigError, ConfigManager};
 use models::{Category, CategoryError, Priority, PriorityError, StorageError, Task};
-use prompter::{PromptError, StdinPrompter};
+use prompter::{NonInteractivePrompter, PromptError, Prompter, StdinPrompter};
 use std::path::PathBuf;
 use storage::{create_storage, migrate_storage, MigrationOutcome, Storage, StorageType};
 use task_manager::{confirm_flush, TaskManager, TaskManagerError};
@@ -116,6 +116,11 @@ fn run() -> Result<(), CliError> {
     // override so callers (and tests) can point at a config file outside $HOME.
     let mut config_manager = ConfigManager::new(cli.config.as_deref())?;
 
+    // One prompter for the whole invocation, chosen from the non-interactive
+    // flags. Built here rather than inside each command so `--yes` /
+    // `--no-input` mean the same thing everywhere.
+    let mut prompter = build_prompter(&cli);
+
     match cli.command {
         Commands::Config { command } => match command {
             ConfigCommands::Set { key_value } => {
@@ -143,19 +148,130 @@ fn run() -> Result<(), CliError> {
             }
         },
         Commands::Category { command } => {
-            let storage = open_storage(&config_manager)?;
+            let storage = open_task_storage(&mut config_manager, prompter.as_mut())?;
             run_category_command(&*storage, command)?;
         }
         Commands::Deleted { command } => {
-            let storage = open_storage(&config_manager)?;
+            let storage = open_task_storage(&mut config_manager, prompter.as_mut())?;
             run_deleted_command(&*storage, command)?;
         }
         other => {
-            let storage = open_storage(&config_manager)?;
-            run_task_command(&*storage, &config_manager, other)?;
+            let storage = open_task_storage(&mut config_manager, prompter.as_mut())?;
+            run_task_command(&*storage, &config_manager, prompter.as_mut(), other)?;
         }
     }
 
+    Ok(())
+}
+
+/// Picks the prompter for this invocation.
+///
+/// With neither flag the real `StdinPrompter` is used - which is still safe
+/// for automation, because it detects a non-interactive stdin itself and
+/// reports `PromptError::NotInteractive` rather than blocking on a
+/// `read_line` nobody will answer.
+fn build_prompter(cli: &Cli) -> Box<dyn Prompter> {
+    if cli.yes {
+        Box::new(NonInteractivePrompter::assuming_yes())
+    } else if cli.no_input {
+        Box::new(NonInteractivePrompter::assuming_no())
+    } else {
+        Box::new(StdinPrompter)
+    }
+}
+
+/// The categories a first run offers to create, in the order they get
+/// created (README: "offer to create the default categories of 'Home' and
+/// 'Work'").
+const DEFAULT_CATEGORIES: [&str; 2] = ["Home", "Work"];
+
+/// Opens task storage for a command that needs it, making the first-run
+/// offer (issue #27) on the way.
+///
+/// This is the *only* path to task storage from `run`, which is what decides
+/// the answer to "which commands trigger the offer?": every command that
+/// touches tasks or categories does, and `trtodo config ...` - the one
+/// command group that never opens task storage - does not. That is
+/// deliberate:
+///
+///   - creating categories means writing the data file, so offering during
+///     `config list` would turn a read-only query into a storage mutation
+///     (and into a `create_dir_all`, see `open_storage`);
+///   - `config set storage.path=...` is exactly how a user says where their
+///     data should live, and prompting *before* that took effect would
+///     create the default categories in the location they were in the middle
+///     of changing;
+///   - `--help` / `--version` never reach `run` at all, since clap exits
+///     first, so they can't prompt either way.
+///
+/// The trade-off is that a user whose very first command is `config list`
+/// gets the offer on their next real command instead - which is the right
+/// time for it anyway.
+fn open_task_storage(
+    config_manager: &mut ConfigManager,
+    prompter: &mut dyn Prompter,
+) -> Result<Box<dyn Storage>, CliError> {
+    let storage = open_storage(config_manager)?;
+    offer_default_categories(&*storage, config_manager, prompter)?;
+    Ok(storage)
+}
+
+/// Offers to create the README's default "Home" and "Work" categories the
+/// first time `trtodo` touches task storage (issue #27, closing out issue
+/// #4).
+///
+/// "First run" is a *config* fact, not a storage fact: the marker written by
+/// `ConfigManager::record_default_categories_offer` records that the offer
+/// has been resolved. Deciding from storage alone ("are there no categories?")
+/// would re-offer forever to anyone who deliberately deleted every category,
+/// and an earlier attempt at this feature was rejected for a related pair of
+/// mistakes - creating the categories outright rather than offering, and
+/// doing it on every invocation rather than once.
+///
+/// The offer is skipped, and the marker recorded silently, when categories
+/// already exist: that is an established install (or one upgrading from a
+/// version predating this feature), not a fresh one, and it must not be
+/// interrupted to be asked about categories it clearly doesn't need.
+///
+/// A `PromptError` is *not* an answer, so it records nothing and prints
+/// nothing: with no terminal attached (a pipe, a cron job, CI) there is
+/// nobody to ask, and the run must neither block nor quietly burn the
+/// one-and-only offer that a human would have wanted to see. Automation that
+/// wants a definite answer passes `--yes` or `--no-input`.
+fn offer_default_categories(
+    storage: &dyn Storage,
+    config_manager: &mut ConfigManager,
+    prompter: &mut dyn Prompter,
+) -> Result<(), CliError> {
+    if config_manager.default_categories_offered() {
+        return Ok(());
+    }
+
+    if !storage.get_all_categories()?.is_empty() {
+        config_manager.record_default_categories_offer()?;
+        return Ok(());
+    }
+
+    let question = format!(
+        "It looks like this is your first run. Create the default categories {}?",
+        DEFAULT_CATEGORIES.join(" and ")
+    );
+    let accepted = match prompter.confirm(&question, true) {
+        Ok(accepted) => accepted,
+        Err(_) => return Ok(()),
+    };
+
+    if accepted {
+        let mut category_manager = CategoryManager::new(storage);
+        for name in DEFAULT_CATEGORIES {
+            let id = category_manager.add_category(name.to_string(), None)?;
+            println!("Category '{}' added with ID {}", name, id);
+        }
+    } else {
+        println!("Skipped; add categories yourself with 'trtodo category add <name>'");
+    }
+
+    config_manager.record_default_categories_offer()?;
     Ok(())
 }
 
@@ -744,16 +860,16 @@ fn category_display_name(
 fn run_task_command(
     storage: &dyn Storage,
     config_manager: &ConfigManager,
+    // The invocation's prompter (see `build_prompter`). Its `choose` detects
+    // a non-interactive stdin (e.g. this binary run from a test harness or a
+    // script) and returns a clean `PromptError::NotInteractive` instead of
+    // blocking - see `crate::prompter` for why this is a trait rather than an
+    // inline `stdin().read_line()` call.
+    prompter: &mut dyn Prompter,
     command: Commands,
 ) -> Result<(), CliError> {
     let category_manager = CategoryManager::new(storage);
     let task_manager = TaskManager::new(storage);
-    // The real, interactive prompter. Its `choose` detects a non-interactive
-    // stdin (e.g. this binary run from a test harness or a script) and
-    // returns a clean `PromptError::NotInteractive` instead of blocking -
-    // see `crate::prompter` for why this is a trait rather than an inline
-    // `stdin().read_line()` call.
-    let mut prompter = StdinPrompter;
 
     match command {
         Commands::Add {
@@ -782,7 +898,7 @@ fn run_task_command(
             category,
         } => {
             let scope = resolve_task_scope(&category_manager, category)?;
-            let task = task_manager.resolve_task(&title_or_id, scope, &mut prompter)?;
+            let task = task_manager.resolve_task(&title_or_id, scope, prompter)?;
             task_manager.delete_task(task.id)?;
             println!("Task '{}' deleted", task.title);
         }
@@ -792,7 +908,7 @@ fn run_task_command(
             category,
         } => {
             let scope = resolve_task_scope(&category_manager, category)?;
-            let task = task_manager.resolve_task(&title_or_id, scope, &mut prompter)?;
+            let task = task_manager.resolve_task(&title_or_id, scope, prompter)?;
             let old_title = task.title.clone();
             task_manager.rename_task(task, new_title.clone())?;
             println!("Task '{}' renamed to '{}'", old_title, new_title);
@@ -802,7 +918,7 @@ fn run_task_command(
             category,
         } => {
             let scope = resolve_task_scope(&category_manager, category)?;
-            let task = task_manager.resolve_task(&title_or_id, scope, &mut prompter)?;
+            let task = task_manager.resolve_task(&title_or_id, scope, prompter)?;
             let title = task.title.clone();
             task_manager.set_completed(task, true)?;
             println!("Task '{}' checked off", title);
@@ -812,7 +928,7 @@ fn run_task_command(
             category,
         } => {
             let scope = resolve_task_scope(&category_manager, category)?;
-            let task = task_manager.resolve_task(&title_or_id, scope, &mut prompter)?;
+            let task = task_manager.resolve_task(&title_or_id, scope, prompter)?;
             let title = task.title.clone();
             task_manager.set_completed(task, false)?;
             println!("Task '{}' unchecked", title);
@@ -858,8 +974,7 @@ fn run_task_command(
                     _ => return Err(CliError::InvalidMoveArguments),
                 };
 
-            let task =
-                task_manager.resolve_task(&task_ref, Some(scope_category_id), &mut prompter)?;
+            let task = task_manager.resolve_task(&task_ref, Some(scope_category_id), prompter)?;
             task_manager.move_task(task.id, target_category_id)?;
             let target_name = category_display_name(&category_manager, target_category_id)?;
             println!("Task '{}' moved to '{}'", task.title, target_name);

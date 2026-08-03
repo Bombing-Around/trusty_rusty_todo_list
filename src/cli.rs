@@ -22,6 +22,27 @@ pub struct Cli {
     )]
     pub config: Option<PathBuf>,
 
+    // These two are the non-interactive escape hatch for scripts and CI
+    // (issue #27): they let an invocation answer the first-run offer of the
+    // default categories without a terminal, so automation is never blocked
+    // waiting on input. Questions with no yes/no answer - picking between
+    // several tasks that share a name - are still refused under both flags
+    // rather than guessed at; see `prompter::NonInteractivePrompter`.
+    /// Assume "yes" for confirmation prompts and never read from stdin
+    ///
+    /// Accepts the first-run offer to create the default categories without
+    /// asking. Questions that aren't yes/no (such as which of several
+    /// same-named tasks you meant) are still refused rather than guessed at.
+    #[arg(long = "yes", short = 'y', global = true, conflicts_with = "no_input")]
+    pub yes: bool,
+
+    /// Never prompt; decline confirmations and never read from stdin
+    ///
+    /// The counterpart to --yes. Declining the first-run offer is a real
+    /// answer, so it is remembered and never asked again.
+    #[arg(long = "no-input", global = true)]
+    pub no_input: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -264,6 +285,29 @@ mod tests {
         // Absent by default, so ConfigManager falls back to the $HOME location.
         let cli = parse_args(&["trtodo", "config", "list"]);
         assert_eq!(cli.config, None);
+    }
+
+    /// The non-interactive flags for issue #27's first-run offer. Both are
+    /// global (usable before or after the subcommand) and mutually
+    /// exclusive - "assume yes" and "assume no" cannot both hold.
+    #[test]
+    fn test_non_interactive_flags() {
+        let cli = parse_args(&["trtodo", "--yes", "list"]);
+        assert!(cli.yes);
+        assert!(!cli.no_input);
+
+        let cli = parse_args(&["trtodo", "list", "-y"]);
+        assert!(cli.yes);
+
+        let cli = parse_args(&["trtodo", "list", "--no-input"]);
+        assert!(cli.no_input);
+        assert!(!cli.yes);
+
+        let cli = parse_args(&["trtodo", "list"]);
+        assert!(!cli.yes);
+        assert!(!cli.no_input);
+
+        assert!(try_parse_args(&["trtodo", "--yes", "--no-input", "list"]).is_err());
     }
 
     #[test]

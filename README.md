@@ -48,10 +48,18 @@ The binary named `trtodo` will accept various arguments
 | `trtodo --help`                                                                                       | List these commands                                                                                                                       |
 | `trtodo --help <command>`                                                                             | Describe command and its arguments                                                                                                        |
 | `trtodo --config <path>`                                                                              | Uses the configuration file at the given path instead of the default. May also be set via the `TRTODO_CONFIG` environment variable; the flag wins  |
+| `trtodo --yes` (or `-y`)                                                                              | Assume "yes" for confirmation prompts and never read from stdin                                                                           |
+| `trtodo --no-input`                                                                                   | Never prompt: decline confirmations and never read from stdin                                                                             |
 
 ## Additional Behaviors
 
 The first time `trtodo` is run it should offer to create the default categories of "Home" and "Work" and create a configuration file under `.config\trtodo\` or `C:\\Users\\<username>\\AppData\\Roaming\trtodo`.
+
+That offer defaults to yes (a bare Enter accepts it) and is made at most once:
+
+- It is made by the first command that touches task storage, not by `trtodo config ...`. Config commands never open task storage, and creating categories from a read-only `config list` - or from the very `config set storage.path=...` that decides where task data belongs - would put data somewhere the user did not ask for.
+- The answer is recorded in the configuration file, so no later run asks again. Accepting, declining, and already having categories (an existing install, upgraded or otherwise) all count as answered; deleting every category afterwards is a legitimate empty state and does not bring the offer back.
+- With no terminal attached (a pipe, a cron job, CI) there is nobody to ask, so the offer is silently skipped: nothing is created, nothing is recorded, and nothing blocks waiting for input. Pass `--yes` or `--no-input` to give a definite answer from a script.
 
 When operating on a `task_name`, the application will try to match the name - if it encounters the same name in multiple categories, it will prompt the user for which item on which to operate.
 
@@ -70,6 +78,8 @@ Category context (set via `category use`) persists between runs of the applicati
 ## Configuration Values
 
 Configuration values are stored in `trtodo-config.json`. By default it's written to a config folder unless it's first read in your home directory. 
+
+The keys below are the configurable ones - they are exactly what `config set`, `config default`, and `config list` operate on. The file may also contain internal bookkeeping that is not a setting (currently `default_categories_offered`, which records that the first-run offer above has been answered); those are not listed by `config list` and cannot be set with `config set`.
 
 | Config Key              | Default Value      | Options             | Description                                                                                                                           |
 | ----------------------- | ------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |

@@ -131,6 +131,20 @@ pub struct Config {
     pub default_category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_priority: Option<String>,
+    /// The first-run marker for issue #27: `Some(true)` records that the
+    /// offer to create the default "Home"/"Work" categories has already been
+    /// resolved (accepted, declined, or found unnecessary because categories
+    /// already existed), so it is never made a second time.
+    ///
+    /// This is bookkeeping, not a preference, so it is deliberately absent
+    /// from `ConfigManager::{get, set, unset, list}` and from the README's
+    /// configuration table: `config list` stays a faithful rendering of that
+    /// table, and there is no user-facing key whose meaning we would have to
+    /// define. It is still plain JSON in the same file, so anyone who wants
+    /// the offer back can delete the line (or set it to `false`, which reads
+    /// as "not yet offered" - see `Config::default_categories_offered`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_categories_offered: Option<bool>,
 }
 
 impl Config {
@@ -153,7 +167,17 @@ impl Config {
             storage_path: None,
             default_category: None,
             default_priority: None,
+            default_categories_offered: None,
         }
+    }
+
+    /// Whether the first-run offer of the default "Home"/"Work" categories
+    /// has already been resolved and must not be made again (issue #27).
+    ///
+    /// Anything other than a stored `true` - the key absent (a genuinely
+    /// fresh install), or an explicit `false` - means "not yet offered".
+    pub fn default_categories_offered(&self) -> bool {
+        self.default_categories_offered.unwrap_or(false)
     }
 
     /// Resolves every unset field to its documented default, leaving any
@@ -170,6 +194,9 @@ impl Config {
             storage_path: self.storage_path.clone().or(defaults.storage_path),
             default_category: self.default_category.clone().or(defaults.default_category),
             default_priority: self.default_priority.clone().or(defaults.default_priority),
+            // Not a documented setting with a default value - "unset" is the
+            // whole signal here, so it is carried through untouched.
+            default_categories_offered: self.default_categories_offered,
         }
     }
 
@@ -200,6 +227,10 @@ impl Default for Config {
             // `default-category` has no documented default (README: `null`).
             default_category: None,
             default_priority: default_priority(),
+            // Not a user-facing setting: an unset marker means "the first-run
+            // offer hasn't been made yet", which is exactly right for a
+            // fresh install.
+            default_categories_offered: None,
         }
     }
 }
@@ -281,6 +312,36 @@ impl ConfigManager {
             "default-priority" => config.default_priority.map(|v| v.to_string()),
             _ => None,
         }
+    }
+
+    /// Whether the first-run offer of the default "Home"/"Work" categories
+    /// has already been resolved (issue #27).
+    ///
+    /// Reads the *stored* config, never the effective one: the point of the
+    /// marker is to distinguish "nothing has ever been written here" from
+    /// "the user answered", and resolving it through defaults would erase
+    /// exactly that distinction.
+    pub fn default_categories_offered(&self) -> bool {
+        self.stored_config().default_categories_offered()
+    }
+
+    /// Records that the first-run offer has been resolved, so no later run
+    /// makes it again - including after the user deliberately deletes every
+    /// category, which is a legitimate empty state and not a fresh install.
+    ///
+    /// Deliberately not reachable through `set`: this is bookkeeping rather
+    /// than a documented configuration key (see `Config`).
+    pub fn record_default_categories_offer(&mut self) -> Result<(), ConfigError> {
+        // Load-mutate-save, like `set`, so any keys the user has already
+        // stored survive.
+        let mut data = self
+            .storage
+            .load()
+            .map_err(|e| ConfigError::Storage(e.to_string()))?;
+        data.config.default_categories_offered = Some(true);
+        self.storage
+            .save(&data)
+            .map_err(|e| ConfigError::Storage(e.to_string()))
     }
 
     pub fn set(&mut self, key: &str, value: &str) -> Result<(), ConfigError> {
@@ -563,5 +624,71 @@ mod tests {
         assert_eq!(unset.storage_path, None);
         assert_eq!(unset.default_category, None);
         assert_eq!(unset.default_priority, None);
+    }
+
+    /// Issue #27: a fresh config (nothing stored) must report the first-run
+    /// offer as *not* made, and recording it must survive into the next
+    /// process invocation - that persistence is the whole mechanism that
+    /// stops the offer being repeated.
+    #[test]
+    fn test_default_categories_offer_marker_persists() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        let mut manager = ConfigManager::new(Some(&config_path)).unwrap();
+        assert!(!manager.default_categories_offered());
+        assert!(
+            !config_path.exists(),
+            "merely asking must not create the config file"
+        );
+
+        manager.record_default_categories_offer().unwrap();
+        assert!(manager.default_categories_offered());
+
+        let manager = ConfigManager::new(Some(&config_path)).unwrap();
+        assert!(manager.default_categories_offered());
+    }
+
+    /// The marker is bookkeeping, not a documented setting: it must not
+    /// appear in `config list` (which mirrors the README's configuration
+    /// table) and must not be reachable through `set` / `default`.
+    #[test]
+    fn test_default_categories_offer_marker_is_not_a_user_facing_key() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        let mut manager = ConfigManager::new(Some(&config_path)).unwrap();
+        manager.record_default_categories_offer().unwrap();
+
+        let list = manager.list();
+        assert_eq!(list.len(), 5);
+        assert!(!list
+            .iter()
+            .any(|(key, _, _)| key.contains("default-categories")));
+        assert_eq!(manager.get("default-categories-offered"), None);
+        assert!(manager.set("default-categories-offered", "false").is_err());
+        assert!(manager.unset("default-categories-offered").is_err());
+    }
+
+    /// Recording the marker must not disturb settings the user already
+    /// stored, and setting a key afterwards must not wipe the marker - both
+    /// halves of the load-mutate-save round trip.
+    #[test]
+    fn test_recording_the_marker_preserves_other_keys_and_vice_versa() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        let mut manager = ConfigManager::new(Some(&config_path)).unwrap();
+        manager.set("default-priority", "high").unwrap();
+        manager.record_default_categories_offer().unwrap();
+        assert_eq!(manager.get("default-priority"), Some("high".to_string()));
+
+        manager.set("deleted-task-lifespan", "7").unwrap();
+        assert!(manager.default_categories_offered());
+
+        let manager = ConfigManager::new(Some(&config_path)).unwrap();
+        assert!(manager.default_categories_offered());
+        assert_eq!(manager.get("default-priority"), Some("high".to_string()));
+        assert_eq!(manager.get("deleted-task-lifespan"), Some("7".to_string()));
     }
 }
