@@ -29,7 +29,7 @@ impl Trtodo {
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_trusty_rusty_todo_list"))
+        Command::new(env!("CARGO_BIN_EXE_trtodo"))
             .arg("--config")
             .arg(&self.config_path)
             // Make sure nothing can silently fall back to a real home directory.

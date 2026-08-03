@@ -13,32 +13,6 @@ how to spend fewer tokens getting the same work done.
 
 ## Rough edges
 
-### The binary is not called `trtodo`
-
-`README.md` line 21 says "The binary named `trtodo`", and every row of the
-command table spells commands as `trtodo ...`. But `Cargo.toml` has no
-`[[bin]]` section, so the binary takes the package name: `cargo build`
-produces `target/debug/trusty_rusty_todo_list`.
-
-Nothing is broken by this today — the integration tests find the binary
-through `env!("CARGO_BIN_EXE_trusty_rusty_todo_list")`, which cargo generates
-from the real target name — but the documented install does not produce the
-documented command. By this repo's own rule (the README is the spec), this is
-a bug in `Cargo.toml`, not in the README.
-
-Filed as #35. The fix is one stanza plus a mechanical rename:
-
-```toml
-[[bin]]
-name = "trtodo"
-path = "src/main.rs"
-```
-
-...and then `CARGO_BIN_EXE_trusty_rusty_todo_list` → `CARGO_BIN_EXE_trtodo`
-in all seven files under `tests/`. Deliberately not done yet: it is a real
-change with a blast radius, and it deserves its own commit rather than
-riding along with unrelated work.
-
 ### Two further gaps
 
 - **Renaming a category orphans a `default-category` that names it** (#36). The
@@ -59,7 +33,7 @@ riding along with unrelated work.
 - **There is no lib target.** `cargo test --lib` fails outright with `no
   library targets found in package`. The ~99 unit tests live in the binary
   target alongside the 50 integration tests. Use plain `cargo test`, or
-  `cargo test --bin trusty_rusty_todo_list` to skip the integration suites.
+  `cargo test --bin trtodo` to skip the integration suites.
 
 - **`rusqlite` is vendored with `features = ["bundled"]`**, so a cold build
   compiles SQLite from C source and takes minutes. A warm build takes
