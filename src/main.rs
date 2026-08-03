@@ -168,7 +168,7 @@ fn run() -> Result<(), CliError> {
         },
         Commands::Category { command } => {
             let storage = open_task_storage(&mut config_manager, prompter.as_mut())?;
-            run_category_command(&*storage, command)?;
+            run_category_command(&*storage, &mut config_manager, command)?;
         }
         Commands::Deleted { command } => {
             let storage = open_task_storage(&mut config_manager, prompter.as_mut())?;
@@ -505,7 +505,11 @@ fn purge_expired_deleted_tasks(
     Ok(())
 }
 
-fn run_category_command(storage: &dyn Storage, command: CategoryCommands) -> Result<(), CliError> {
+fn run_category_command(
+    storage: &dyn Storage,
+    config_manager: &mut ConfigManager,
+    command: CategoryCommands,
+) -> Result<(), CliError> {
     let mut manager = CategoryManager::new(storage);
 
     match command {
@@ -537,6 +541,7 @@ fn run_category_command(storage: &dyn Storage, command: CategoryCommands) -> Res
             let category = resolve_category(&manager, &old_name)?;
             manager.update_category(category.id, new_name.clone())?;
             println!("Category '{}' renamed to '{}'", category.name, new_name);
+            carry_default_category_across_rename(config_manager, &category.name, &new_name)?;
         }
         CategoryCommands::List => {
             let current = manager.get_current_category();
@@ -756,6 +761,44 @@ fn resolve_default_priority(config_manager: &ConfigManager) -> Result<Priority, 
         .get("default-priority")
         .unwrap_or_else(|| "medium".to_string());
     Ok(Priority::from_str(&value)?)
+}
+
+/// Keeps `default-category` pointed at the right category across a rename.
+///
+/// `default-category` stores a *name* rather than a resolved ID, and does so
+/// on purpose (see `resolve_add_category`): a stored ID could silently start
+/// pointing at an unrelated category once IDs are recycled, whereas a stored
+/// name only ever fails to resolve - a failure `add` can report. Storing a
+/// name instead of an ID buys that safety at the cost of needing to be kept
+/// in step by hand whenever the name it points at changes, which is exactly
+/// what a rename does. Without this, `category update` on the category
+/// `default-category` names would silently orphan the setting: it would keep
+/// naming the *old* name, which no longer resolves to anything, and `add`
+/// would only find out - as an error - the next time it fell through to step
+/// 3 of its resolution chain.
+///
+/// This lives in `main` rather than `CategoryManager::update_category`
+/// because `CategoryManager` knows nothing about config, and should not
+/// start now just to carry one setting - `main` is the thin dispatch layer
+/// that already holds both.
+///
+/// Comparison is case-insensitive, matching how category names are looked up
+/// everywhere else (`Storage::get_category_by_name`,
+/// `is_reserved_category_name`). Only a `default-category` that actually
+/// named the renamed category is touched; an unset setting, or one naming
+/// some other category, is left alone.
+fn carry_default_category_across_rename(
+    config_manager: &mut ConfigManager,
+    old_name: &str,
+    new_name: &str,
+) -> Result<(), CliError> {
+    if let Some(configured) = config_manager.get("default-category") {
+        if configured.eq_ignore_ascii_case(old_name) {
+            config_manager.set("default-category", new_name)?;
+            println!("Updated config 'default-category' to '{}'", new_name);
+        }
+    }
+    Ok(())
 }
 
 /// Resolves the category a task created by `add` should land in.

@@ -90,7 +90,7 @@ The keys below are the configurable ones - they are exactly what `config set`, `
 | `deleted-task-lifespan` | `0`                | integer<1..?>       | Number of days before task in Deleted category are deleted. A value of 0, the default, indicates they are never automatically deleted |
 | `storage.type`          | `json`             | `json\|sqlite`      | Type of storage backend to use                                                                                                        |
 | `storage.path`          | `~/.config/trtodo` | string              | Path to storage location                                                                                                              |
-| `default-category`      | `null`             | string              | Category `add` files new tasks into when no `--category` is given and no category context is set. Must name an existing category (by name or ID) - `add` reports an error rather than guessing if it no longer resolves. Renaming a category does not update this setting |
+| `default-category`      | `null`             | string              | Category `add` files new tasks into when no `--category` is given and no category context is set. Must name an existing category (by name or ID) - `add` reports an error rather than guessing if it no longer resolves. `category update` carries this setting along when it renames the category it currently names |
 | `default-priority`      | `medium`           | `high\|medium\|low` | Default priority for new tasks                                                                                                        |
 
 ### Storage backends
