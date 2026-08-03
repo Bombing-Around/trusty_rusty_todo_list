@@ -1,5 +1,6 @@
 use super::Storage;
 use super::StorageError;
+use crate::category_manager::UNCATEGORIZED_ID;
 use crate::models::{Category, Priority, StorageData, Task};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -251,6 +252,43 @@ impl Storage for SqliteStorage {
             })?;
         }
 
+        // Seed the Uncategorized sentinel row before any task is inserted.
+        //
+        // `Uncategorized` (ID 0) is synthesized by `CategoryManager` rather
+        // than stored - it cannot be created, renamed, or deleted, so it has
+        // no business being in `data.categories`, and it never is. But the
+        // `tasks.category_id` foreign key does not know that: a task filed
+        // under Uncategorized references a row that, without this, does not
+        // exist, and SQLite rejects the insert with "FOREIGN KEY constraint
+        // failed". JSON has no such constraint, so the same data saved fine
+        // there and only SQLite users hit it.
+        //
+        // That made every uncategorized task unstorable under SQLite - which
+        // is now the *default* landing place for `add` with no `--category`
+        // (issue #33) and a routine thing to carry across a backend switch
+        // (issue #17). Rather than drop the foreign key, which is genuinely
+        // worth having for real categories, we give it the one row it is
+        // missing. `load` filters this row back out (see there), so the
+        // sentinel is an implementation detail of this backend and is never
+        // visible to callers.
+        tx.execute(
+            "INSERT INTO categories (id, name, description, \"order\", created_at) \
+             VALUES (?1, ?2, NULL, ?3, ?4)",
+            // The name is immaterial - `load` filters this row out and
+            // callers synthesize their own - but it is spelled the same way
+            // so anyone opening the database with `sqlite3` sees something
+            // recognizable rather than a mystery row.
+            params![
+                UNCATEGORIZED_ID,
+                "Uncategorized",
+                0i64,
+                Utc::now().to_rfc3339()
+            ],
+        )
+        .map_err(|e| {
+            StorageError::Storage(format!("Failed to seed the Uncategorized category: {}", e))
+        })?;
+
         // Insert categories
         for category in &data.categories {
             tx.execute(
@@ -330,11 +368,22 @@ impl Storage for SqliteStorage {
             .map_err(|e| StorageError::Storage(format!("Failed to query categories: {}", e)))?;
 
         for category in category_iter {
-            categories.push(
-                category.map_err(|e| {
-                    StorageError::Storage(format!("Failed to read category: {}", e))
-                })?,
-            );
+            let category = category
+                .map_err(|e| StorageError::Storage(format!("Failed to read category: {}", e)))?;
+
+            // Hide the Uncategorized sentinel `save` seeds to satisfy the
+            // `tasks.category_id` foreign key. Callers synthesize their own
+            // Uncategorized and treat a *stored* one as data corruption, so
+            // letting it escape here would be visible in two ways that both
+            // matter: `first_run` decides a store is untouched by asking
+            // whether `get_all_categories` is empty (issue #27), and it would
+            // otherwise be copied into the other backend by a `storage.type`
+            // switch (issue #17). Filtering here keeps the sentinel local to
+            // this backend, so both stay correct and JSON and SQLite continue
+            // to load as exactly the same data.
+            if category.id != UNCATEGORIZED_ID {
+                categories.push(category);
+            }
         }
 
         // Load tasks
@@ -604,6 +653,58 @@ mod tests {
         data.tasks[0].restore();
         storage.save(&data).unwrap();
         assert!(storage.load().unwrap().tasks[0].deleted_at.is_none());
+    }
+
+    /// A task filed under the synthesized "Uncategorized" category (ID 0)
+    /// must save and load like any other, and must not drag the sentinel row
+    /// `save` seeds to satisfy the `tasks.category_id` foreign key back out
+    /// with it.
+    ///
+    /// This is a regression test for a real defect: because "Uncategorized"
+    /// is synthesized rather than stored, nothing satisfied that foreign key
+    /// and SQLite rejected every such insert with "FOREIGN KEY constraint
+    /// failed", while JSON - which has no constraint - accepted the identical
+    /// data. It stayed latent while `add` required `--category`; it became
+    /// the default path once `--category` was made optional with
+    /// Uncategorized as the fallback (issue #33), and a routine one for
+    /// anyone carrying an uncategorized task across a `storage.type` switch
+    /// (issue #17).
+    ///
+    /// The second half is what keeps the sentinel from leaking: first-run
+    /// detection asks whether `get_all_categories` is empty (issue #27), so a
+    /// visible sentinel would make a fresh SQLite store look established and
+    /// silently suppress the setup offer.
+    #[test]
+    fn test_uncategorized_tasks_round_trip_without_leaking_the_sentinel() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("uncategorized.db");
+        let storage = SqliteStorage::new(&db_path).unwrap();
+
+        let mut data = create_test_data();
+        data.tasks[0].category_id = UNCATEGORIZED_ID;
+        storage.save(&data).unwrap();
+
+        let loaded = storage.load().unwrap();
+        let task = loaded.tasks.iter().find(|t| t.id == 1).unwrap();
+        assert_eq!(task.category_id, UNCATEGORIZED_ID);
+
+        // The sentinel is an implementation detail and must stay invisible.
+        assert!(
+            !loaded.categories.iter().any(|c| c.id == UNCATEGORIZED_ID),
+            "the Uncategorized sentinel leaked out of the SQLite backend"
+        );
+        assert_eq!(loaded.categories.len(), data.categories.len());
+
+        // A store holding only uncategorized tasks still reports no
+        // categories, so first-run detection stays correct.
+        let mut empty = create_test_data();
+        empty.categories.clear();
+        empty.tasks.iter_mut().for_each(|t| {
+            t.category_id = UNCATEGORIZED_ID;
+        });
+        empty.current_category = None;
+        storage.save(&empty).unwrap();
+        assert!(storage.load().unwrap().categories.is_empty());
     }
 
     /// A database created before `deleted_at` existed (schema version 1) has
