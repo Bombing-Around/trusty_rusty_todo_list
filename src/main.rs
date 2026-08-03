@@ -100,6 +100,25 @@ pub enum CliError {
          --category explicitly"
     )]
     UnresolvableDefaultCategory(String),
+    /// `Uncategorized` is synthesized fresh on every read (see
+    /// `category_manager::CategoryManager`) rather than stored, so there is
+    /// no row for `category order`/`reorder` to update - the manager layer
+    /// would already fail with a generic "Category with id 0 not found" if
+    /// this didn't intercept it first. Catching it here gives a message
+    /// that actually explains why, instead of looking like a typo'd ID.
+    #[error(
+        "'Uncategorized' cannot be reordered: it is always sorted first and its \
+         position is not stored"
+    )]
+    CannotOrderUncategorized,
+    /// Positions are 1-based (see `cli::CategoryCommands::Order`), and `0`
+    /// is specifically the fixed order value reserved for the synthesized
+    /// "Uncategorized" category - so it is not just out of range, it names
+    /// a slot no real category can ever legally occupy.
+    #[error(
+        "position must be at least 1 (positions are 1-based; 0 is reserved for Uncategorized)"
+    )]
+    InvalidCategoryPosition,
 }
 
 fn main() {
@@ -551,6 +570,34 @@ fn run_category_command(storage: &dyn Storage, command: CategoryCommands) -> Res
                 None => println!("Current category: unknown (ID: {})", id),
             },
         },
+        CategoryCommands::Order { category, position } => {
+            let category = resolve_category(&manager, &category)?;
+            if category.id == UNCATEGORIZED_ID {
+                return Err(CliError::CannotOrderUncategorized);
+            }
+            if position == 0 {
+                return Err(CliError::InvalidCategoryPosition);
+            }
+            manager.set_category_order(category.id, position)?;
+            println!(
+                "Category '{}' moved to position {}",
+                category.name, position
+            );
+        }
+        CategoryCommands::Reorder { categories } => {
+            let mut ids = Vec::with_capacity(categories.len());
+            let mut names = Vec::with_capacity(categories.len());
+            for reference in &categories {
+                let category = resolve_category(&manager, reference)?;
+                if category.id == UNCATEGORIZED_ID {
+                    return Err(CliError::CannotOrderUncategorized);
+                }
+                names.push(category.name);
+                ids.push(category.id);
+            }
+            manager.reorder_categories(ids)?;
+            println!("Categories reordered: {}", names.join(", "));
+        }
     }
 
     Ok(())
