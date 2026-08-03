@@ -13,26 +13,11 @@ how to spend fewer tokens getting the same work done.
 
 ## Rough edges
 
-### Two further gaps
-
-- **Renaming a category orphans a `default-category` that names it** (#36). The
-  setting stores a name on purpose (IDs are handed back out after a delete,
-  so a stored ID can silently start pointing at an unrelated category). The
-  consequence is that `category update Work Werk` leaves
-  `default-category=Work` dangling, and the next bare `add` fails to resolve
-  it. Renaming should probably follow the setting across.
-
-- **`JsonStorage::save` is a bare `fs::write` with no format check** (#37). Not
-  reachable through configuration now that each backend owns a distinct
-  filename, but a direct constructor call could still have JSON clobber a
-  SQLite file. The distinct filenames are what make this unreachable — see
-  the warning in `CLAUDE.md` about not "cleaning up" that arrangement.
-
 ### Build and test facts that surprise people
 
 - **There is no lib target.** `cargo test --lib` fails outright with `no
-  library targets found in package`. The ~99 unit tests live in the binary
-  target alongside the 50 integration tests. Use plain `cargo test`, or
+  library targets found in package`. The unit tests live in the binary
+  target alongside the integration tests. Use plain `cargo test`, or
   `cargo test --bin trtodo` to skip the integration suites.
 
 - **`rusqlite` is vendored with `features = ["bundled"]`**, so a cold build
@@ -45,8 +30,17 @@ how to spend fewer tokens getting the same work done.
   CI runs the strict form. A bare clippy run that looks clean proves
   nothing about whether CI will pass.
 
-- **Current state:** 149 tests across 7 binaries (99 unit + 3 + 3 + 14 + 7
+- **Current state:** 173 tests across 7 binaries (111 unit + 15 + 3 + 14 + 7
   + 6 + 17). If that total drops, something was deleted rather than fixed.
+
+- **A shared `CARGO_TARGET_DIR` across worktrees will lie to you.** Sharing one
+  target directory between parallel worktrees looks like an easy way to avoid
+  paying the bundled-`rusqlite` cold build more than once. It is not: every
+  worktree writes the same `debug/trtodo`, and the integration tests invoke
+  exactly that binary. Two agents building concurrently means one runs its
+  tests against the other's binary, and the failures that produces are
+  spurious and unreproducible. Give each worktree its own target directory and
+  pay the build, or build them one at a time.
 
 ---
 
@@ -79,7 +73,19 @@ individual branch was green.
 If you parallelize, reserve real budget for a combined smoke test that
 exercises the features *against each other*, not just a merge that compiles.
 
-### 3. Check the issue against the code before scoping work from it
+### 3. Check what an agent ran, not what it says it did
+
+A subagent reporting "all tests pass" is a claim about whatever command it
+actually ran. One reported success here having run only `cargo test --bin
+trtodo`, which skips all seven integration suites — the exact place this
+project's regressions surface. Another reported a passing suite whose numbers
+came from a target directory a concurrent build was overwriting.
+
+Neither agent was being careless in a way its own transcript would reveal.
+Re-run the full trio yourself on the branch before opening a pull request; it
+is seconds against a warm build, and it is the only number worth quoting.
+
+### 4. Check the issue against the code before scoping work from it
 
 Issue text goes stale. One issue here asserted that `SCHEMA_VERSION` was
 "a hardcoded 1" and proposed deleting the version table on that basis; the
@@ -88,7 +94,7 @@ the issue as written would have destroyed history.
 
 One `grep` before scoping is cheaper than one wrong branch.
 
-### 4. Decide the commit convention before branching, not after
+### 5. Decide the commit convention before branching, not after
 
 Retrofitting Conventional Commits onto four already-merged branches meant
 cherry-picking, re-resolving conflicts that had already been resolved once,
@@ -97,7 +103,7 @@ identical output. That verification was worth doing — it caught a
 duplicated README row — but the whole exercise was avoidable by deciding
 the format up front.
 
-### 5. Read ranges, not whole files
+### 6. Read ranges, not whole files
 
 Four files here are 700–1100 lines. Reading one end to end to change a
 comment near the bottom costs the whole file every time. `grep -n` for the
@@ -106,14 +112,14 @@ anchor, then read the range around it.
 Conversely: don't re-read a file immediately after editing it to "check"
 the edit. A failed edit reports itself.
 
-### 6. Run the full CI trio once, at the end
+### 7. Run the full CI trio once, at the end
 
 `cargo fmt --all -- --check`, `cargo clippy -- -D warnings`, `cargo test`.
 Running all three after every small edit triples the cost of iterating for
 no added signal. Run `cargo check` while working; run the trio before
 pushing.
 
-### 7. Let `CLAUDE.md` do its job
+### 8. Let `CLAUDE.md` do its job
 
 It is loaded automatically at session start. That is precisely why it must
 stay short and stay true: everything in it is paid for on every single
