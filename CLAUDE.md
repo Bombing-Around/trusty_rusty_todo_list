@@ -97,10 +97,24 @@ mistake the existing code for one.
   bearing, since most of this code encodes a decision someone will otherwise
   undo.
 
+## Code comments
+
+**No issue or PR numbers in comments.** Not `(issue #29)`, not `Issue #25:`,
+not `issue #22's second half`. Code has to be readable by someone who does not
+have the tracker open — which includes every session that starts cold.
+
+Write the reason instead of a pointer to it. If a comment currently leans on an
+issue number to carry its meaning ("the entire point of issue #29's design"),
+that is a comment missing its actual content: say *what* the design is and why
+("the entire point of soft deletion keeping the real `category_id`").
+
+Backlog links belong in commit messages and pull requests, where `Closes #NN`
+is expected and traceability already lives.
+
 ## Commit conventions
 
 [Conventional Commits](https://www.conventionalcommits.org/), enforced by
-commitlint in CI on pull requests (not on `main` — history before PR #34 predates
+commitlint in CI on pull requests (not on `main` — the older history predates
 the convention). The PR title is linted too, because a squash-merge makes the
 title the commit that lands on `main`.
 
@@ -129,11 +143,15 @@ Open and deliberately not started:
   worth re-scoping rather than treating "TEST ALL THE THINGS" as a spec.
 - **#4** is effectively resolved by #27 and can likely be closed with a pointer.
 
-Two known gaps, both filed nowhere yet:
+## Rough edges and session cost
 
-- Renaming a category silently orphans a `default-category` setting that names
-  it (the setting stores a name, deliberately — IDs are reused after delete,
-  which is worse).
-- `JsonStorage::save` is a bare `fs::write` with no format check. Not reachable
-  through configuration now that backends have distinct filenames, but a direct
-  constructor call could still have JSON clobber a SQLite file.
+`docs/WORKING-NOTES.md` covers what this file deliberately leaves out: known
+defects not yet filed (the binary is built as `trusty_rusty_todo_list`, not the
+documented `trtodo`; renaming a category orphans `default-category`), build
+facts that surprise people (`cargo test --lib` fails — there is no lib target;
+`rusqlite` is bundled, so never delete `target/`), and the practices that keep
+an AI-assisted session from spending its budget re-deriving known things.
+
+Read it before parallelizing work across subagents or scoping a branch from an
+issue — those are the two places this project has historically wasted the most
+effort.
