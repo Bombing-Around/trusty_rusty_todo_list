@@ -47,6 +47,11 @@ builds it on demand; `get_next_category_id` never hands out 0. Consequences:
 
 - `CategoryManager::list_categories` drops any stored row with ID 0 and
   substitutes its own.
+- **Order `0` is reserved for it too.** `list_categories` sorts on
+  `(order, name)`, and the synthesized Uncategorized is pinned at order 0 so it
+  always sorts first. That is why `category order`/`reorder` hand out 1-based
+  positions and reject 0: a real category given order 0 would tie Uncategorized
+  and race it alphabetically for the top slot.
 - SQLite has a `tasks.category_id` foreign key, so a task in Uncategorized
   references a row that does not otherwise exist. `SqliteStorage::save` seeds a
   sentinel row and `load` filters it back out. **Do not "clean up" either half** —
@@ -133,29 +138,40 @@ commits.
 
 Open and deliberately not started:
 
-- **#16 category ordering** — needs an `order` field honored across both
-  backends plus a reorder command. `Category.order` already exists and is
-  persisted, but nothing lets a user set it.
 - **#19 split `config.rs`** — it does three jobs (key schema/validation,
   persistence, backend construction). Collides with anything else touching
   config, so do it on a quiet tree.
 - **#20 / #21 tests and doc comments** — re-scoped from open-ended wishes into
   checklists with an exit condition. #20's real gap is backend parity: most
   behaviour is exercised against JSON only, which is how the SQLite
-  foreign-key bug shipped.
-- **#36 category rename orphans `default-category`** — the setting stores a
-  name (IDs get recycled, which is worse), and nothing keeps it in step.
-- **#37 `JsonStorage::save` has no format check** — unreachable through
-  configuration, guarded only by the distinct-filenames invariant above.
+  foreign-key bug shipped. The ordering work closed part of that gap by
+  covering both backends; the rest of the suite still leans on JSON.
 
 #4 is closed: all four of its bullets landed.
 
+## State as of PRs #39–#41
+
+Three parallel branches, each squash-merged as one conventional commit.
+
+- **#37 → #39.** `JsonStorage::save` now rejects a target that is non-empty and
+  not JSON, so the "never clobber a SQLite file" guarantee is local to the
+  backend instead of resting entirely on the distinct-filenames invariant.
+  That invariant still matters and is still not to be collapsed — the check is
+  a second line, not a replacement.
+- **#36 → #40.** `category update` carries a `default-category` that names the
+  renamed category. The rewrite lives in `main.rs`, so `CategoryManager` still
+  knows nothing about config.
+- **#16 → #41.** `category order` and `category reorder` exist; the
+  `#[allow(dead_code)]` markers on `set_category_order`/`reorder_categories`
+  are gone. Positions are 1-based — see the Uncategorized invariant above for
+  why 0 is not available.
+
 ## Rough edges and session cost
 
-`docs/WORKING-NOTES.md` covers what this file deliberately leaves out: known
-defects not yet filed (renaming a category orphans `default-category`), build
+`docs/WORKING-NOTES.md` covers what this file deliberately leaves out: build
 facts that surprise people (`cargo test --lib` fails — there is no lib target;
-`rusqlite` is bundled, so never delete `target/`), and the practices that keep
+`rusqlite` is bundled, so never delete `target/`), the one way sharing a cargo
+target directory across worktrees will lie to you, and the practices that keep
 an AI-assisted session from spending its budget re-deriving known things.
 
 Read it before parallelizing work across subagents or scoping a branch from an
