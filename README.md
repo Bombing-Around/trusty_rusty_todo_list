@@ -42,7 +42,9 @@ The binary named `trtodo` will accept various arguments
 | `trtodo config set <key=value>`                                                                       | Set configuration key to value                                                                                                            |
 | `trtodo config default <key>`                                                                         | Unsets the value for key to force use of the default value                                                                                |
 | `trtodo config list`                                                                                  | List all configuration keys and their values, including defaults which will be indicated with an asterisk                                 |
-| `trtodo deleted flush`                                                                                | Remove all deleted items from "Deleted" category                                                                                          |
+| `trtodo deleted list`                                                                                 | List all soft-deleted tasks with their IDs, titles, original categories, and deletion dates - i.e. exactly what a `flush` would destroy   |
+| `trtodo deleted restore <title or id>`                                                                | Restore a soft-deleted task to its original category. Matches soft-deleted tasks only, prompting if the title is ambiguous                |
+| `trtodo deleted flush [--yes (or -y, --force)]`                                                       | Permanently remove all soft-deleted tasks, listing them and asking for confirmation first. `--yes` skips the prompt                       |
 | `trtodo --help`                                                                                       | List these commands                                                                                                                       |
 | `trtodo --help <command>`                                                                             | Describe command and its arguments                                                                                                        |
 | `trtodo --config <path>`                                                                              | Uses the configuration file at the given path instead of the default. May also be set via the `TRTODO_CONFIG` environment variable; the flag wins  |
@@ -54,6 +56,10 @@ The first time `trtodo` is run it should offer to create the default categories 
 When operating on a `task_name`, the application will try to match the name - if it encounters the same name in multiple categories, it will prompt the user for which item on which to operate.
 
 When deleting an item it will be _soft_deleted_: it is marked with a deletion timestamp but keeps its real category, so restoring it is lossless. Soft-deleted items are hidden from listings and searches, and are purged automatically after `deleted-task-lifespan` days (0, the default, means never).
+
+Because soft-deleted tasks are hidden everywhere else, the `deleted` namespace is where they can be seen and acted on. `deleted list` shows them, oldest deletion first - the order in which a flush or the automatic purge reaches them. `deleted restore` puts one back in the category it was deleted from; it resolves its argument among soft-deleted tasks only, so it can never match a live task, and it takes no `--category` (run `deleted list` to get the ID).
+
+`deleted flush` is the only irreversible command in the application, so it lists what it is about to destroy and asks for confirmation before doing it. Confirmation is skipped with `--yes` (also spelled `-y` or `--force`). With no terminal attached - a pipe, a script, CI - there is nobody to ask, so a `flush` without `--yes` **refuses and exits non-zero** rather than destroying data unattended; scripts that mean it can say so with `--yes`. Flushing when nothing is soft-deleted has nothing at stake and so is a silent no-op that never prompts.
 
 When deleting a category it is removed and its ID is made available again. All associated tasks are moved to the top unless a new category is provided.
 

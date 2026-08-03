@@ -73,9 +73,34 @@ impl Task {
         self.updated_at = Utc::now();
     }
 
+    /// Un-deletes the task. Because `soft_delete` never touched
+    /// `category_id`, this is all a restore takes - the task goes straight
+    /// back where it came from (issue #31). Reachable from the CLI as
+    /// `trtodo deleted restore <title or id>`.
     pub fn restore(&mut self) {
         self.deleted_at = None;
         self.updated_at = Utc::now();
+    }
+
+    /// The deletion timestamp rendered for humans: the "deleted" column of
+    /// `trtodo deleted list`, the flush preview, and the restore
+    /// disambiguation prompt all share this one format so the same task
+    /// looks the same wherever it is shown.
+    ///
+    /// Timestamps are stored in UTC (`Utc::now`), and this deliberately
+    /// prints them as such rather than converting to local time: nothing
+    /// else in the CLI displays a timestamp yet, so there is no local-time
+    /// convention to match, and labelling the zone is better than quietly
+    /// implying one.
+    ///
+    /// A live task has no deletion timestamp; every caller of this today
+    /// works from `Storage::get_deleted_tasks`, so the `None` arm exists
+    /// only so this can never panic on a task that slipped through.
+    pub fn deleted_at_display(&self) -> String {
+        match self.deleted_at {
+            Some(deleted_at) => deleted_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+            None => "not deleted".to_string(),
+        }
     }
 
     pub fn mark_completed(&mut self) {

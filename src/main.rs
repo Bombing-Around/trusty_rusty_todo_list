@@ -10,11 +10,11 @@ use category_manager::{CategoryManager, UNCATEGORIZED_ID};
 use clap::Parser;
 use cli::{CategoryCommands, Cli, Commands, ConfigCommands, DeletedCommands};
 use config::{ConfigError, ConfigManager};
-use models::{Category, CategoryError, Priority, PriorityError, StorageError};
-use prompter::StdinPrompter;
+use models::{Category, CategoryError, Priority, PriorityError, StorageError, Task};
+use prompter::{PromptError, StdinPrompter};
 use std::path::PathBuf;
 use storage::{create_storage, migrate_storage, MigrationOutcome, Storage, StorageType};
-use task_manager::{TaskManager, TaskManagerError};
+use task_manager::{confirm_flush, TaskManager, TaskManagerError};
 use thiserror::Error;
 
 /// Top-level application error type.
@@ -63,6 +63,23 @@ pub enum CliError {
          to Uncategorized)"
     )]
     InvalidMoveArguments,
+    /// `deleted flush` is the only irreversible command in the CLI, so it
+    /// asks first (issue #32). When there is no terminal to ask at -
+    /// `StdinPrompter` detects that and returns `PromptError::NotInteractive`
+    /// rather than blocking - the choice is between destroying the data
+    /// unattended and refusing. It refuses: a script that meant to flush can
+    /// say so with `--yes`, whereas a script that flushed by accident has no
+    /// way to say it didn't mean it.
+    ///
+    /// `PromptError::NotInteractive`'s own message is not reused here; it
+    /// talks about picking between multiple matches and offers `--category`,
+    /// neither of which applies to a flush.
+    #[error(
+        "'deleted flush' permanently destroys every soft-deleted task, and there is no \
+         terminal attached to confirm at; re-run interactively, or pass --yes to confirm \
+         non-interactively ('deleted list' shows what would be destroyed)"
+    )]
+    FlushNotConfirmed,
 }
 
 fn main() {
@@ -405,17 +422,119 @@ fn run_category_command(storage: &dyn Storage, command: CategoryCommands) -> Res
 }
 
 /// Dispatches `trtodo deleted ...`. Mirrors `run_category_command`'s shape.
+///
+/// Unlike that function this also needs a `CategoryManager`: soft-deleted
+/// tasks keep their real `category_id` (issue #29), and both `list` and
+/// `restore` are only useful if that is reported as a *name* the user
+/// recognizes rather than a bare number.
 fn run_deleted_command(storage: &dyn Storage, command: DeletedCommands) -> Result<(), CliError> {
+    let category_manager = CategoryManager::new(storage);
     let task_manager = TaskManager::new(storage);
+    // See `run_task_command` for why this is the `Prompter` seam and not an
+    // inline `stdin().read_line()`.
+    let mut prompter = StdinPrompter;
 
     match command {
-        DeletedCommands::Flush => {
-            let count = task_manager.flush_deleted()?;
-            println!("Flushed {} deleted task(s)", count);
+        DeletedCommands::List => {
+            let tasks = task_manager.list_deleted()?;
+            println!("Deleted tasks:");
+            // `list` prints its header and then nothing when there is
+            // nothing to show, which is fine for a command whose answer is
+            // "you have no tasks". This command's whole job is to answer
+            // "what would a flush destroy?", and silence is a bad way to say
+            // "nothing" - it is indistinguishable from a command that failed
+            // to look.
+            if tasks.is_empty() {
+                println!("  (none)");
+            }
+            for task in &tasks {
+                println!("{}", format_deleted_task(&category_manager, task)?);
+            }
+        }
+        DeletedCommands::Restore { title_or_id } => {
+            let task = task_manager.resolve_deleted_task(&title_or_id, &mut prompter)?;
+            let title = task.title.clone();
+            let original_category_id = task.category_id;
+            let category_id = task_manager.restore_task(task)?;
+            let category_name = category_display_name(&category_manager, category_id)?;
+            if category_id == original_category_id {
+                println!("Task '{}' restored to category '{}'", title, category_name);
+            } else {
+                // Only reachable from externally-edited data - see
+                // `task_manager::restore_destination` - but if it ever
+                // happens the user should hear that the task did not go back
+                // where it came from.
+                println!(
+                    "Task '{}' restored to category '{}'; its original category no longer exists",
+                    title, category_name
+                );
+            }
+        }
+        DeletedCommands::Flush { yes } => {
+            let pending = task_manager.list_deleted()?;
+
+            // Nothing at stake means nothing to confirm: a flush with an
+            // empty deleted set is a documented no-op, and prompting for
+            // permission to destroy zero tasks (or failing a script over it)
+            // would be noise.
+            if pending.is_empty() {
+                println!("Flushed 0 deleted task(s)");
+                return Ok(());
+            }
+
+            // Printed before the flush in both paths, so it serves as the
+            // confirmation preview *and* as the record of what was destroyed
+            // (issue #32 asked for both; one listing satisfies both, and
+            // printing it afterwards instead would mean the interactive user
+            // confirms blind).
+            println!(
+                "The following {} task(s) will be permanently removed:",
+                pending.len()
+            );
+            for task in &pending {
+                println!("{}", format_deleted_task(&category_manager, task)?);
+            }
+
+            if !yes {
+                match confirm_flush(&mut prompter, pending.len()) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        println!("Flush cancelled; nothing was removed");
+                        return Ok(());
+                    }
+                    Err(PromptError::NotInteractive) => return Err(CliError::FlushNotConfirmed),
+                    Err(e) => return Err(TaskManagerError::from(e).into()),
+                }
+            }
+
+            let flushed = task_manager.flush_deleted()?;
+            println!("Flushed {} deleted task(s)", flushed.len());
         }
     }
 
     Ok(())
+}
+
+/// One row of `deleted list`: ID, title, the task's *real* category name,
+/// and when it was deleted (issue #32's four columns).
+///
+/// Shared with `flush`'s preview so the two commands describe the same task
+/// in exactly the same words. Formatted after `run_task_command`'s `list`
+/// (`<id>: <title> (...)`), minus the `[x]` completion marker: whether a
+/// task about to be destroyed was ticked off first is not information
+/// anybody is deciding on.
+fn format_deleted_task(
+    category_manager: &CategoryManager,
+    task: &Task,
+) -> Result<String, CliError> {
+    let category_name = category_display_name(category_manager, task.category_id)?;
+    Ok(format!(
+        "{}: {} (category: {}, deleted: {})",
+        task.id,
+        task.title,
+        category_name,
+        task.deleted_at_display()
+    ))
 }
 
 /// Resolves a user-supplied category reference, which the README allows to be

@@ -188,15 +188,38 @@ pub enum CategoryCommands {
     List,
 }
 
-/// README: `trtodo deleted flush` - "Remove all deleted items". `deleted
-/// list` (to preview what a flush would destroy) and restoring a
-/// soft-deleted task are deliberately not here: neither is documented in the
-/// README or part of issue #6's scope, and `Task::restore` stays unwired for
-/// the same reason.
+/// The `deleted` namespace: everything you can do with the tasks that
+/// `trtodo delete` soft-deleted (issue #29's `deleted_at` timestamp).
+///
+/// `list` and `restore` were previously absent on the grounds that the
+/// README documented only `flush`; issues #31 and #32 settled that surface
+/// and the README now documents all three. They are not optional extras:
+/// soft-deleted tasks are hidden from `list` and `search`, so without
+/// `deleted list` they are invisible right up until `flush` destroys them,
+/// and without `deleted restore` a soft delete is just a slower hard delete.
 #[derive(Subcommand)]
 pub enum DeletedCommands {
+    /// List all soft-deleted tasks, showing what a flush would destroy
+    List,
+    /// Restore a soft-deleted task to its original category
+    Restore {
+        /// Title or ID of the soft-deleted task
+        ///
+        /// Resolved among soft-deleted tasks only, so this can never
+        /// accidentally match a live task. There is no `--category`: run
+        /// `deleted list` to see the IDs.
+        title_or_id: String,
+    },
     /// Permanently remove all soft-deleted tasks
-    Flush,
+    Flush {
+        /// Skip the confirmation prompt
+        ///
+        /// Required when running non-interactively (piped stdin, CI,
+        /// scripts): with no terminal to confirm at, `flush` refuses rather
+        /// than destroying data unattended.
+        #[arg(short = 'y', long = "yes", visible_alias = "force")]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -375,14 +398,57 @@ mod tests {
 
     #[test]
     fn test_deleted_commands() {
-        // Test deleted flush
-        let cli = parse_args(&["trtodo", "deleted", "flush"]);
+        // Test deleted list
+        let cli = parse_args(&["trtodo", "deleted", "list"]);
         match cli.command {
             Commands::Deleted { command } => match command {
-                DeletedCommands::Flush => {}
+                DeletedCommands::List => {}
+                _ => panic!("Expected Deleted List command"),
             },
             _ => panic!("Expected Deleted command"),
         }
+
+        // Test deleted restore
+        let cli = parse_args(&["trtodo", "deleted", "restore", "Buy milk"]);
+        match cli.command {
+            Commands::Deleted { command } => match command {
+                DeletedCommands::Restore { title_or_id } => {
+                    assert_eq!(title_or_id, "Buy milk");
+                }
+                _ => panic!("Expected Deleted Restore command"),
+            },
+            _ => panic!("Expected Deleted command"),
+        }
+
+        // Test deleted flush: confirmation is opt-out, so `yes` is false
+        // unless the escape hatch was passed.
+        let cli = parse_args(&["trtodo", "deleted", "flush"]);
+        match cli.command {
+            Commands::Deleted { command } => match command {
+                DeletedCommands::Flush { yes } => assert!(!yes),
+                _ => panic!("Expected Deleted Flush command"),
+            },
+            _ => panic!("Expected Deleted command"),
+        }
+
+        // ... in any of its three spellings.
+        for flag in ["--yes", "-y", "--force"] {
+            let cli = parse_args(&["trtodo", "deleted", "flush", flag]);
+            match cli.command {
+                Commands::Deleted { command } => match command {
+                    DeletedCommands::Flush { yes } => assert!(yes, "{flag} should confirm"),
+                    _ => panic!("Expected Deleted Flush command"),
+                },
+                _ => panic!("Expected Deleted command"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_deleted_restore_requires_a_task_reference() {
+        // Nothing sensible to restore without one, and defaulting to "all"
+        // would be a surprising thing to do by accident.
+        assert!(try_parse_args(&["trtodo", "deleted", "restore"]).is_err());
     }
 
     #[test]
