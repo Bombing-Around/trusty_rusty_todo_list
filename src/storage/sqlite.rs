@@ -6,16 +6,29 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+/// The schema this build knows how to read and write.
+///
+/// Version history, so the number means something concrete:
+///   - `1`: the original tables, with no `deleted_at` column on `tasks`.
+///   - `2`: `tasks.deleted_at` added for soft deletion (issue #29).
+///
+/// Bump this *and* teach `initialize_schema` how to get a database from the
+/// previous version to the new one whenever the on-disk shape changes.
 #[allow(dead_code)]
 const SCHEMA_VERSION: i32 = 2;
 
+/// Created and read before anything else, so `initialize_schema` can find out
+/// what it is dealing with *before* it starts mutating tables. Deliberately
+/// separate from `INIT_SCHEMA` below for that ordering alone.
 #[allow(dead_code)]
-const INIT_SCHEMA: &str = r#"
--- Create schema version table first
+const INIT_VERSION_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
 );
+"#;
 
+#[allow(dead_code)]
+const INIT_SCHEMA: &str = r#"
 -- Create categories table
 CREATE TABLE IF NOT EXISTS categories (
     id INTEGER PRIMARY KEY,
@@ -69,6 +82,24 @@ impl SqliteStorage {
         Ok(storage)
     }
 
+    /// Brings the database at hand up to `SCHEMA_VERSION`, or refuses to touch
+    /// it if it cannot.
+    ///
+    /// What versioning here *is*: a guard rail plus one hand-written upgrade
+    /// step. `schema_version` is read back before any table is touched, an
+    /// unknown (newer) version is rejected outright with a message the user
+    /// can act on, and a version-1 database is upgraded in place by adding
+    /// the `deleted_at` column before the stored version is advanced.
+    ///
+    /// What it is *not*: a general migration system. There is no ordered
+    /// `MIGRATIONS` list, no down-migrations, and no way to go from version N
+    /// to N+2 other than by writing that step here by hand. `src/storage/
+    /// migrations.rs` used to gesture at one but never had a single migration
+    /// in it and was deleted in issue #23; issue #25 decided that rather than
+    /// resurrect it (or delete `schema_version` and lose the record of the
+    /// v1 -> v2 change), the table should simply get the reader it never had.
+    /// Designing the real thing is deferred until the schema settles - do not
+    /// mistake the code below for it.
     fn initialize_schema(&self) -> Result<(), StorageError> {
         let conn = self
             .conn
@@ -79,7 +110,43 @@ impl SqliteStorage {
         conn.execute("PRAGMA foreign_keys = ON", [])
             .map_err(|e| StorageError::Storage(format!("Failed to enable foreign keys: {}", e)))?;
 
-        // First create the tables. `CREATE TABLE IF NOT EXISTS` is a no-op
+        // Read the stored version *first*, before any table is created or
+        // altered: if this database came from a build we don't understand, we
+        // want to have changed nothing by the time we bail out.
+        conn.execute_batch(INIT_VERSION_TABLE).map_err(|e| {
+            StorageError::Storage(format!("Failed to initialize schema version table: {}", e))
+        })?;
+
+        // `MAX(version)` rather than a bare `SELECT version`: it collapses an
+        // empty table (a brand-new database, or one seeded by some earlier
+        // build that never inserted a row) into a clean `None` instead of a
+        // `QueryReturnedNoRows` error, and it is robust to a stray duplicate
+        // row.
+        let stored_version: Option<i32> = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| StorageError::Storage(format!("Failed to read schema version: {}", e)))?;
+
+        // A version from the future is the one case we cannot handle: the
+        // tables may hold columns, constraints, or encodings this build has
+        // never heard of, and blundering on would either error somewhere far
+        // less comprehensible or quietly write data back in the older shape.
+        // Fail here, while the database is still untouched, and say exactly
+        // what happened.
+        if let Some(version) = stored_version {
+            if version > SCHEMA_VERSION {
+                return Err(StorageError::Storage(format!(
+                    "this database uses schema version {}, but this build of trtodo only \
+                     understands up to version {}; it was most likely written by a newer \
+                     version of trtodo. Upgrade trtodo, or point storage.path at a different \
+                     directory. The database has not been modified.",
+                    version, SCHEMA_VERSION
+                )));
+            }
+        }
+
+        // Now create the tables. `CREATE TABLE IF NOT EXISTS` is a no-op
         // against a database that already has a `tasks` table from before
         // `deleted_at` existed, so it will NOT retroactively add the column -
         // that is handled explicitly below.
@@ -105,32 +172,31 @@ impl SqliteStorage {
                 })?;
         }
 
-        // Check if schema_version table exists and has a version
-        let version_exists: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version IS NOT NULL)",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|e| StorageError::Storage(format!("Failed to check schema version: {}", e)))?;
-
-        if !version_exists {
-            // Set initial schema version
-            conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?1)",
-                params![SCHEMA_VERSION],
-            )
-            .map_err(|e| StorageError::Storage(format!("Failed to set schema version: {}", e)))?;
-        } else {
-            // Bring an older database's stored version up to date now that
-            // the migration above has run.
-            conn.execute(
-                "UPDATE schema_version SET version = ?1 WHERE version < ?1",
-                params![SCHEMA_VERSION],
-            )
-            .map_err(|e| {
-                StorageError::Storage(format!("Failed to update schema version: {}", e))
-            })?;
+        // Record where we ended up. Written last, after the upgrade above has
+        // actually succeeded, so a database that failed part way through is
+        // never left claiming a version it doesn't have.
+        match stored_version {
+            None => {
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?1)",
+                    params![SCHEMA_VERSION],
+                )
+                .map_err(|e| {
+                    StorageError::Storage(format!("Failed to set schema version: {}", e))
+                })?;
+            }
+            Some(version) if version < SCHEMA_VERSION => {
+                conn.execute(
+                    "UPDATE schema_version SET version = ?1 WHERE version < ?1",
+                    params![SCHEMA_VERSION],
+                )
+                .map_err(|e| {
+                    StorageError::Storage(format!("Failed to update schema version: {}", e))
+                })?;
+            }
+            // Already current. The `>` case was rejected above, so this arm
+            // is exactly `version == SCHEMA_VERSION`: leave the row alone.
+            Some(_) => {}
         }
 
         Ok(())
@@ -622,6 +688,89 @@ mod tests {
             .query_row("SELECT version FROM schema_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    /// Issue #25: `schema_version` used to be written once at database
+    /// creation and never read, so the number it held was decorative. It now
+    /// has a reader. On a brand-new database the seeded value must be the
+    /// version this build actually writes, and re-opening must leave exactly
+    /// one row saying so - a second row (or a bumped value) would mean the
+    /// bookkeeping drifts every time the app starts.
+    #[test]
+    fn test_schema_version_is_seeded_once_and_stays_put() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("versioned.db");
+
+        let read_versions = |storage: &SqliteStorage| -> Vec<i32> {
+            let conn = storage.conn.lock().unwrap();
+            let mut stmt = conn.prepare("SELECT version FROM schema_version").unwrap();
+            let rows: Vec<i32> = stmt
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .map(|v| v.unwrap())
+                .collect();
+            rows
+        };
+
+        let storage = SqliteStorage::new(&db_path).unwrap();
+        assert_eq!(read_versions(&storage), vec![SCHEMA_VERSION]);
+        drop(storage);
+
+        let storage = SqliteStorage::new(&db_path).unwrap();
+        assert_eq!(read_versions(&storage), vec![SCHEMA_VERSION]);
+    }
+
+    /// The reader's whole reason for existing (issue #25): a database written
+    /// by a *newer* build carries a version this code has never heard of. Its
+    /// tables may hold columns or constraints we don't know about, so opening
+    /// it must fail with a message the user can act on rather than half-work
+    /// and write data back in an older shape.
+    #[test]
+    fn test_rejects_a_database_from_a_newer_build() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("from_the_future.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("CREATE TABLE schema_version (version INTEGER NOT NULL);")
+                .unwrap();
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                params![SCHEMA_VERSION + 1],
+            )
+            .unwrap();
+        }
+
+        let message = match SqliteStorage::new(&db_path) {
+            Err(e) => e.to_string(),
+            Ok(_) => {
+                panic!("a database from a newer build must be rejected, not opened and written to")
+            }
+        };
+        assert!(
+            message.contains(&(SCHEMA_VERSION + 1).to_string())
+                && message.contains(&SCHEMA_VERSION.to_string()),
+            "the error should name both the version found and the version supported, got: {message}"
+        );
+        assert!(
+            message.contains("newer version of trtodo"),
+            "the error should explain *why* this happened, got: {message}"
+        );
+
+        // And it must have bailed out before touching anything: no tables were
+        // created behind the user's back.
+        let conn = Connection::open(&db_path).unwrap();
+        let table_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('tasks', 'categories', 'current_category')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            table_count, 0,
+            "a rejected database must be left exactly as it was found"
+        );
     }
 
     #[test]

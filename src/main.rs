@@ -13,7 +13,7 @@ use config::{ConfigError, ConfigManager};
 use models::{Category, CategoryError, Priority, PriorityError, StorageError};
 use prompter::StdinPrompter;
 use std::path::PathBuf;
-use storage::{create_storage, Storage, StorageType};
+use storage::{create_storage, migrate_storage, MigrationOutcome, Storage, StorageType};
 use task_manager::{TaskManager, TaskManagerError};
 use thiserror::Error;
 
@@ -85,6 +85,12 @@ fn run() -> Result<(), CliError> {
                 let (key, value) = key_value
                     .split_once('=')
                     .ok_or_else(|| CliError::MalformedKeyValue(key_value.clone()))?;
+                // Deliberately *before* the config is written: if carrying the
+                // user's data across fails, the setting stays where it was and
+                // they are still looking at their tasks (issue #17).
+                if key == "storage.type" {
+                    carry_data_across_backend_switch(&config_manager, value)?;
+                }
                 config_manager.set(key, value)?;
                 println!("Configuration updated successfully");
             }
@@ -133,33 +139,174 @@ fn run() -> Result<(), CliError> {
 /// documented default threshold is 0 ("never"), and `purge_deleted_tasks`
 /// itself short-circuits before touching disk in that case.
 fn open_storage(config_manager: &ConfigManager) -> Result<Box<dyn Storage>, CliError> {
-    let storage_type = match config_manager.get("storage.type").as_deref() {
-        None | Some("json") => StorageType::Json,
-        Some("sqlite") => StorageType::Sqlite,
-        Some(other) => return Err(CliError::UnknownStorageType(other.to_string())),
-    };
+    let storage_type = configured_storage_type(config_manager)?;
+    let storage = open_storage_of_type(config_manager, storage_type)?;
+    purge_expired_deleted_tasks(&*storage, config_manager)?;
 
-    let dir = match config_manager.get("storage.path") {
-        Some(path) => PathBuf::from(shellexpand::tilde(&path).as_ref()),
-        None => dirs::home_dir()
+    Ok(storage)
+}
+
+/// The backend named by `storage.type`. `ConfigManager::get` already resolves
+/// the documented default (`json`), so `None` here only happens if that
+/// default ever goes missing - treated the same as any other unrecognised
+/// value rather than silently assumed.
+fn configured_storage_type(config_manager: &ConfigManager) -> Result<StorageType, CliError> {
+    let value = config_manager
+        .get("storage.type")
+        .unwrap_or_else(|| "json".to_string());
+    StorageType::parse(&value).ok_or(CliError::UnknownStorageType(value))
+}
+
+/// The `storage.path` *directory* every backend keeps its data file in. See
+/// `StorageType::data_file_name` for why the file name varies by backend.
+fn storage_dir(config_manager: &ConfigManager) -> Result<PathBuf, CliError> {
+    match config_manager.get("storage.path") {
+        Some(path) => Ok(PathBuf::from(shellexpand::tilde(&path).as_ref())),
+        None => Ok(dirs::home_dir()
             .ok_or(CliError::NoHomeDirectory)?
             .join(".config")
-            .join("trtodo"),
-    };
+            .join("trtodo")),
+    }
+}
 
-    let file_name = match storage_type {
-        StorageType::Json => "trtodo-data.json",
-        StorageType::Sqlite => "trtodo-data.db",
-    };
+/// Opens a *specific* backend against the configured storage directory,
+/// without the automatic purge sweep.
+///
+/// `open_storage` is the entry point for commands, which want the configured
+/// backend and want the sweep to run. This one exists for
+/// `carry_data_across_backend_switch`, which needs to hold both the outgoing
+/// and incoming backends open at once and must not have a purge fire against
+/// a store it is merely reading in passing.
+fn open_storage_of_type(
+    config_manager: &ConfigManager,
+    storage_type: StorageType,
+) -> Result<Box<dyn Storage>, CliError> {
+    let dir = storage_dir(config_manager)?;
 
     // SQLite cannot create the containing directory for us, and JSON only does
     // so on save - make sure it exists before either backend opens the file.
     std::fs::create_dir_all(&dir)?;
 
-    let storage = create_storage(storage_type, &dir.join(file_name))?;
-    purge_expired_deleted_tasks(&*storage, config_manager)?;
+    Ok(create_storage(
+        storage_type,
+        &dir.join(storage_type.data_file_name()),
+    )?)
+}
 
-    Ok(storage)
+/// Carries the user's tasks and categories over when `storage.type` changes,
+/// and reports honestly when it can't (issue #17).
+///
+/// Each backend keeps its own data file, so before this existed a switch made
+/// every category and task disappear from view with nothing but "Warning:
+/// Changing storage type may require data migration" - naming a migration
+/// that did not exist - to explain it. Nothing was actually destroyed (the old
+/// file sat there untouched, and switching back revealed it again), but it
+/// read as data loss, which for a todo list is nearly as bad.
+///
+/// The copy itself is `storage::migrate_storage`, which owns the safety
+/// rules: source is never written to, a non-empty destination is never
+/// overwritten, IDs are never renumbered. All this function does is resolve
+/// the two backends and turn the outcome into something a person can read.
+///
+/// Anything that isn't a real backend change is a silent no-op: setting
+/// `storage.type` to what it already is, or to a value
+/// `ConfigManager::set` is about to reject anyway.
+fn carry_data_across_backend_switch(
+    config_manager: &ConfigManager,
+    new_value: &str,
+) -> Result<(), CliError> {
+    let Some(new_type) = StorageType::parse(new_value) else {
+        // Not a backend we know. Say nothing and let `ConfigManager::set`
+        // produce its own "must be one of: json, sqlite" error.
+        return Ok(());
+    };
+
+    let old_type = configured_storage_type(config_manager)?;
+    if old_type == new_type {
+        return Ok(());
+    }
+
+    let old_file = storage_dir(config_manager)?.join(old_type.data_file_name());
+    if !old_file.exists() {
+        // Nothing was ever written under the outgoing backend - a first-ever
+        // switch. Don't open the new backend just to tell the user nothing
+        // happened.
+        return Ok(());
+    }
+
+    // A source we can't read is the one failure that must NOT block the
+    // switch. If the outgoing store is corrupt, unreadable, or written by a
+    // build we don't understand, then the user can't see that data under the
+    // old backend either - refusing to change `storage.type` would trap them
+    // on the broken backend, and do it while reporting an error about the
+    // backend they were trying to leave. Say what happened, leave the file
+    // alone, and let the switch proceed.
+    //
+    // Failures on the *destination* side are handled the opposite way: they
+    // propagate, so the setting stays put and the user keeps looking at the
+    // store that still works.
+    let source = match open_storage_of_type(config_manager, old_type)
+        .and_then(|source| source.load().map(|_| source).map_err(CliError::from))
+    {
+        Ok(source) => source,
+        Err(e) => {
+            eprintln!(
+                "Warning: could not read the existing {} store at {}, so nothing was migrated: {}",
+                old_type.as_str(),
+                old_file.display(),
+                e
+            );
+            eprintln!(
+                "Warning: the file has been left untouched. Run 'trtodo config set \
+                 storage.type={}' to go back to it.",
+                old_type.as_str()
+            );
+            return Ok(());
+        }
+    };
+    let destination = open_storage_of_type(config_manager, new_type)?;
+
+    match migrate_storage(&*source, &*destination)? {
+        MigrationOutcome::SourceEmpty => {}
+        MigrationOutcome::Migrated { tasks, categories } => {
+            println!(
+                "Migrated {} task(s) and {} categor{} from {} to {} storage.",
+                tasks,
+                categories,
+                if categories == 1 { "y" } else { "ies" },
+                old_type.as_str(),
+                new_type.as_str()
+            );
+            println!(
+                "Your previous {} data was left untouched at {}.",
+                old_type.as_str(),
+                old_file.display()
+            );
+        }
+        MigrationOutcome::DestinationNotEmpty { tasks, categories } => {
+            // Both stores hold real data. Refusing to merge them is the
+            // deliberate choice (see `migrate_storage`); what matters is that
+            // the user is told which data they are about to be looking at and
+            // how to get back to the other set.
+            eprintln!(
+                "Warning: {} storage already holds {} task(s) and {} categor{}, so nothing was \
+                 migrated and nothing was overwritten.",
+                new_type.as_str(),
+                tasks,
+                categories,
+                if categories == 1 { "y" } else { "ies" }
+            );
+            eprintln!(
+                "Warning: your {} data is still intact at {}. Run 'trtodo config set \
+                 storage.type={}' to go back to it.",
+                old_type.as_str(),
+                old_file.display(),
+                old_type.as_str()
+            );
+        }
+    }
+
+    Ok(())
 }
 
 /// Runs the automatic, `deleted-task-lifespan`-gated purge (README: "purged

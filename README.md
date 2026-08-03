@@ -70,3 +70,18 @@ Configuration values are stored in `trtodo-config.json`. By default it's written
 | `storage.path`          | `~/.config/trtodo` | string              | Path to storage location                                                                                                              |
 | `default-category`      | `null`             | string              | Default category to use when no category is specified                                                                                 |
 | `default-priority`      | `medium`           | `high\|medium\|low` | Default priority for new tasks                                                                                                        |
+
+### Storage backends
+
+`storage.path` is a *directory*. Each backend keeps its own data file inside it, so they can never be pointed at the same file and overwrite one another:
+
+| `storage.type` | Data file          |
+| -------------- | ------------------ |
+| `json`         | `trtodo-data.json` |
+| `sqlite`       | `trtodo-data.db`   |
+
+Because of that, changing `storage.type` moves your tasks and categories to the new backend's file:
+
+- If the backend you are leaving has data and the one you are switching to is empty, everything (including task and category IDs, and your `category use` context) is copied across. The old file is left exactly as it was, so switching back always gets you to it.
+- If the backend you are switching to *already* has tasks or categories of its own, nothing is copied and nothing is overwritten. You are told what is in each store and how to switch back. The two are never merged, because merging would mean renumbering IDs.
+- If there is nothing to move, the switch is silent.

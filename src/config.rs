@@ -14,9 +14,6 @@ pub enum ConfigError {
     InvalidConfig(String),
     #[error("Storage error: {0}")]
     Storage(String),
-    #[error("Migration error: {0}")]
-    #[allow(dead_code)]
-    Migration(String),
     #[error("Invalid key: {0}")]
     InvalidKey(String),
 }
@@ -234,7 +231,6 @@ fn default_priority() -> Option<String> {
 
 pub struct ConfigManager {
     storage: Box<dyn Storage>,
-    old_storage_type: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -253,10 +249,7 @@ impl ConfigManager {
             ConfigStorage::new(&config_path).map_err(|e| ConfigError::Storage(e.to_string()))?;
         let storage = Box::new(storage);
 
-        Ok(Self {
-            storage,
-            old_storage_type: None,
-        })
+        Ok(Self { storage })
     }
 
     pub fn save(&self) -> Result<(), ConfigError> {
@@ -302,12 +295,21 @@ impl ConfigManager {
                 let value = validate_lifespan(value)?;
                 config.deleted_task_lifespan = Some(value);
             }
+            // Note what is deliberately *not* here: this used to also print
+            // "Warning: Changing storage type may require data migration" on
+            // every single `set`, and stash the outgoing value in an
+            // `old_storage_type` field feeding `needs_migration()` /
+            // `get_migration_info()` that nothing ever called. The warning
+            // named a migration that did not exist, fired even when there was
+            // no data to migrate, and told the user nothing they could act on
+            // (issue #17). Moving the data is now a real, tested step
+            // (`main::carry_data_across_backend_switch`), and it runs *before*
+            // this method so a failure leaves the setting - and therefore the
+            // user's view of their data - unchanged. Anything it needs to say
+            // about the switch, it says itself and accurately.
             "storage.type" => {
                 validate_storage_type(value)?;
-                // Store old storage type for potential migration
-                self.old_storage_type = Some(config.storage_type.clone().unwrap_or_default());
                 config.storage_type = Some(value.to_string());
-                eprintln!("Warning: Changing storage type may require data migration");
             }
             "storage.path" => {
                 let path = validate_storage_path(value)?;
@@ -402,34 +404,6 @@ impl ConfigManager {
                 stored.default_priority.is_none(),
             ),
         ]
-    }
-
-    #[allow(dead_code)]
-    pub fn needs_migration(&self) -> bool {
-        self.old_storage_type.is_some()
-            && self.old_storage_type.as_ref()
-                != Some(
-                    &self
-                        .stored_config()
-                        .storage_type
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_default(),
-                )
-    }
-
-    #[allow(dead_code)]
-    pub fn get_migration_info(&self) -> Option<(String, String)> {
-        self.old_storage_type.as_ref().map(|old_type| {
-            (
-                old_type.clone(),
-                self.stored_config()
-                    .storage_type
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_default(),
-            )
-        })
     }
 
     /// The raw, on-disk config: `None` fields are genuinely unset.

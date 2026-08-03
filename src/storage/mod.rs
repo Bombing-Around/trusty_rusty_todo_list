@@ -10,10 +10,52 @@ pub mod sqlite;
 pub mod test_utils;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageType {
     Json,
     Sqlite,
+}
+
+impl StorageType {
+    /// Parses the `storage.type` config value. Returns `None` for anything
+    /// that isn't a backend this build knows about, leaving it to the caller
+    /// to decide whether that is an error (`main::open_storage`) or simply
+    /// "not my business" (`main`'s pre-`set` migration hook, which lets
+    /// `ConfigManager::set`'s own validation produce the message).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "json" => Some(StorageType::Json),
+            "sqlite" => Some(StorageType::Sqlite),
+            _ => None,
+        }
+    }
+
+    /// The `storage.type` config value this backend is selected by. Kept
+    /// alongside `parse` so the two can't drift apart.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StorageType::Json => "json",
+            StorageType::Sqlite => "sqlite",
+        }
+    }
+
+    /// The name of the data file this backend keeps inside the `storage.path`
+    /// *directory*.
+    ///
+    /// Every backend gets its own file name on purpose. Pointing two backends
+    /// at one path is how issue #17's original "file is not a database" panic
+    /// happened, and how `JsonStorage::save` (a bare `std::fs::write`, with no
+    /// format check) could silently clobber a SQLite database. Distinct names
+    /// make that structurally impossible rather than merely unlikely - at the
+    /// cost that switching `storage.type` leaves the old backend's file
+    /// sitting there unread, which is what `migrate_storage` below exists to
+    /// deal with.
+    pub fn data_file_name(self) -> &'static str {
+        match self {
+            StorageType::Json => "trtodo-data.json",
+            StorageType::Sqlite => "trtodo-data.db",
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -382,6 +424,96 @@ pub trait Storage {
     }
 }
 
+/// What `migrate_storage` actually did, so the caller can tell the user the
+/// truth instead of printing an unconditional "may require data migration"
+/// warning (issue #17).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationOutcome {
+    /// The source store holds no tasks and no categories, so there was
+    /// nothing to carry over. The common case on a first-ever switch.
+    SourceEmpty,
+    /// The destination store already holds data of its own. Nothing was
+    /// copied and, crucially, nothing was overwritten - the user is switching
+    /// back to a backend they had already been using.
+    DestinationNotEmpty { tasks: usize, categories: usize },
+    /// The source's contents were copied into the (previously empty)
+    /// destination. The source is left exactly as it was.
+    Migrated { tasks: usize, categories: usize },
+}
+
+/// True when a store holds nothing a user would recognise as their data.
+///
+/// Deliberately judged on tasks and categories only. `current_category` is
+/// not considered: a context can only ever point at a category that exists,
+/// so with no categories it is at best stale, and treating it as "content"
+/// would block a perfectly good migration.
+fn is_empty(data: &StorageData) -> bool {
+    data.tasks.is_empty() && data.categories.is_empty()
+}
+
+/// Copies everything in `source` into `destination`, for when the user
+/// changes `storage.type` and would otherwise watch all their tasks and
+/// categories vanish (issue #17).
+///
+/// Backend-agnostic on purpose: it speaks only `Storage`, so json -> sqlite
+/// and sqlite -> json are the same code path, and any future backend gets the
+/// behaviour for free.
+///
+/// The rules it holds to, in order:
+///
+///   - **Never destructive.** The source is only ever `load`ed, never written
+///     to and never removed. After a migration both stores hold the data, and
+///     switching `storage.type` back is enough to reach the original.
+///   - **Never clobbers a non-empty destination.** If the destination already
+///     has tasks or categories - the "I'm switching back to the backend I
+///     used last week" case - this reports `DestinationNotEmpty` and writes
+///     nothing at all. Silently overwriting it would be exactly the data loss
+///     this function exists to prevent.
+///   - **IDs are preserved verbatim, never renumbered.** That is only sound
+///     because of the rule above: the destination is empty, so there is
+///     nothing for the source's IDs to collide with. This is also why no
+///     merge is attempted - reconciling two populated stores would mean
+///     renumbering tasks and categories, silently invalidating every ID the
+///     user has memorised or scripted against. Refusing is the coherent
+///     answer; a merge would need its own design and its own issue.
+///
+/// `current_category` rides along, so the user's `category use` context
+/// survives the switch. The vestigial `config` blob does not: it belongs to
+/// whichever file it is written in (see `StorageData::new`), so the
+/// destination keeps its own.
+#[allow(dead_code)]
+pub fn migrate_storage(
+    source: &dyn Storage,
+    destination: &dyn Storage,
+) -> Result<MigrationOutcome, StorageError> {
+    let source_data = source.load()?;
+    if is_empty(&source_data) {
+        return Ok(MigrationOutcome::SourceEmpty);
+    }
+
+    let destination_data = destination.load()?;
+    if !is_empty(&destination_data) {
+        return Ok(MigrationOutcome::DestinationNotEmpty {
+            tasks: destination_data.tasks.len(),
+            categories: destination_data.categories.len(),
+        });
+    }
+
+    let tasks = source_data.tasks.len();
+    let categories = source_data.categories.len();
+
+    destination.save(&StorageData {
+        version: destination_data.version,
+        tasks: source_data.tasks,
+        categories: source_data.categories,
+        config: destination_data.config,
+        current_category: source_data.current_category,
+        last_sync: chrono::Utc::now(),
+    })?;
+
+    Ok(MigrationOutcome::Migrated { tasks, categories })
+}
+
 #[allow(dead_code)]
 pub fn create_storage(
     storage_type: StorageType,
@@ -403,7 +535,214 @@ pub fn create_storage(
 mod tests {
     use super::*;
     use chrono::Utc;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
+
+    /// A category and a task belonging to it, with explicit non-zero IDs so
+    /// migration tests can assert the IDs survived rather than coincidentally
+    /// matching a default of 0.
+    fn populated_data() -> StorageData {
+        let mut data = StorageData::new();
+
+        let mut work = Category::new("Work".to_string(), None).unwrap();
+        work.id = 4;
+        let mut personal = Category::new("Personal".to_string(), None).unwrap();
+        personal.id = 9;
+
+        let mut report = Task::new("Finish report".to_string(), work.id, None, Priority::High)
+            .expect("valid task");
+        report.id = 12;
+        let mut groceries = Task::new("Buy milk".to_string(), personal.id, None, Priority::Low)
+            .expect("valid task");
+        groceries.id = 30;
+
+        data.categories.push(work);
+        data.categories.push(personal);
+        data.tasks.push(report);
+        data.tasks.push(groceries);
+        data.current_category = Some(9);
+
+        data
+    }
+
+    /// The headline issue #17 behaviour: switching backends must carry the
+    /// user's data across, not silently strand it in a file nothing reads
+    /// anymore. Exercised across *real* backends (JSON -> SQLite), since the
+    /// whole point is that the two formats are involved.
+    #[test]
+    fn test_migrate_storage_carries_data_across_backends() {
+        let dir = TempDir::new().unwrap();
+        let json_path = dir.path().join("trtodo-data.json");
+        let sqlite_path = dir.path().join("trtodo-data.db");
+
+        let source = create_storage(StorageType::Json, &json_path).unwrap();
+        source.save(&populated_data()).unwrap();
+
+        let destination = create_storage(StorageType::Sqlite, &sqlite_path).unwrap();
+        let outcome = migrate_storage(&*source, &*destination).unwrap();
+        assert_eq!(
+            outcome,
+            MigrationOutcome::Migrated {
+                tasks: 2,
+                categories: 2
+            }
+        );
+
+        let migrated = destination.load().unwrap();
+        assert_eq!(migrated.tasks.len(), 2);
+        assert_eq!(migrated.categories.len(), 2);
+
+        // IDs are carried over verbatim - a user's memorised/scripted task IDs
+        // must not be renumbered by a backend switch.
+        let mut task_ids: Vec<u64> = migrated.tasks.iter().map(|t| t.id).collect();
+        task_ids.sort_unstable();
+        assert_eq!(task_ids, vec![12, 30]);
+        let mut category_ids: Vec<u64> = migrated.categories.iter().map(|c| c.id).collect();
+        category_ids.sort_unstable();
+        assert_eq!(category_ids, vec![4, 9]);
+
+        // ... as is the `category use` context.
+        assert_eq!(migrated.current_category, Some(9));
+
+        // Non-destructive: the source still holds everything it did, and the
+        // file is still there to be switched back to.
+        assert!(json_path.exists());
+        let source_after = source.load().unwrap();
+        assert_eq!(source_after.tasks.len(), 2);
+        assert_eq!(source_after.categories.len(), 2);
+        assert_eq!(source_after.current_category, Some(9));
+    }
+
+    /// The same must hold in the other direction - `migrate_storage` speaks
+    /// only the `Storage` trait, and this pins that it really is symmetric
+    /// rather than accidentally JSON-shaped.
+    #[test]
+    fn test_migrate_storage_carries_data_back_from_sqlite_to_json() {
+        let dir = TempDir::new().unwrap();
+        let source =
+            create_storage(StorageType::Sqlite, &dir.path().join("trtodo-data.db")).unwrap();
+        source.save(&populated_data()).unwrap();
+
+        let destination =
+            create_storage(StorageType::Json, &dir.path().join("trtodo-data.json")).unwrap();
+        assert_eq!(
+            migrate_storage(&*source, &*destination).unwrap(),
+            MigrationOutcome::Migrated {
+                tasks: 2,
+                categories: 2
+            }
+        );
+
+        let migrated = destination.load().unwrap();
+        assert_eq!(migrated.tasks.len(), 2);
+        assert_eq!(migrated.categories.len(), 2);
+        assert_eq!(migrated.current_category, Some(9));
+    }
+
+    /// A destination that already holds the user's data must never be
+    /// overwritten - that would turn a confusing-but-recoverable backend
+    /// switch into real data loss. This is the "switching back to the backend
+    /// I used last week" case.
+    #[test]
+    fn test_migrate_storage_never_clobbers_a_non_empty_destination() {
+        let dir = TempDir::new().unwrap();
+        let json_path = dir.path().join("trtodo-data.json");
+        let sqlite_path = dir.path().join("trtodo-data.db");
+
+        let source = create_storage(StorageType::Sqlite, &sqlite_path).unwrap();
+        source.save(&populated_data()).unwrap();
+
+        // The destination has one category and no tasks of its own.
+        let destination = create_storage(StorageType::Json, &json_path).unwrap();
+        let mut existing = StorageData::new();
+        let mut kept = Category::new("Already here".to_string(), None).unwrap();
+        kept.id = 1;
+        existing.categories.push(kept);
+        destination.save(&existing).unwrap();
+        let before = std::fs::read_to_string(&json_path).unwrap();
+
+        assert_eq!(
+            migrate_storage(&*source, &*destination).unwrap(),
+            MigrationOutcome::DestinationNotEmpty {
+                tasks: 0,
+                categories: 1
+            }
+        );
+
+        // Nothing written at all, not even a re-serialization of what was
+        // already there.
+        assert_eq!(std::fs::read_to_string(&json_path).unwrap(), before);
+        let destination_after = destination.load().unwrap();
+        assert_eq!(destination_after.categories.len(), 1);
+        assert_eq!(destination_after.categories[0].name, "Already here");
+        assert!(destination_after.tasks.is_empty());
+
+        // And the source is, as always, untouched.
+        assert_eq!(source.load().unwrap().tasks.len(), 2);
+    }
+
+    /// A first-ever switch has nothing to carry over. That must be a silent
+    /// no-op rather than a write (or a scary warning) - the destination file
+    /// should not even be materialised with content.
+    #[test]
+    fn test_migrate_storage_reports_an_empty_source_without_writing() {
+        let dir = TempDir::new().unwrap();
+        let json_path = dir.path().join("trtodo-data.json");
+        let sqlite_path = dir.path().join("trtodo-data.db");
+
+        let source = create_storage(StorageType::Json, &json_path).unwrap();
+        let destination = create_storage(StorageType::Sqlite, &sqlite_path).unwrap();
+
+        assert_eq!(
+            migrate_storage(&*source, &*destination).unwrap(),
+            MigrationOutcome::SourceEmpty
+        );
+        assert!(destination.load().unwrap().tasks.is_empty());
+        assert!(destination.load().unwrap().categories.is_empty());
+    }
+
+    /// Soft-deleted tasks are still the user's data (they can be restored, and
+    /// `deleted flush` reports them), so they must ride along with everything
+    /// else rather than being quietly dropped by the switch.
+    #[test]
+    fn test_migrate_storage_carries_soft_deleted_tasks_too() {
+        let dir = TempDir::new().unwrap();
+        let source =
+            create_storage(StorageType::Json, &dir.path().join("trtodo-data.json")).unwrap();
+
+        let mut data = populated_data();
+        data.tasks[0].soft_delete();
+        source.save(&data).unwrap();
+
+        let destination =
+            create_storage(StorageType::Sqlite, &dir.path().join("trtodo-data.db")).unwrap();
+        assert_eq!(
+            migrate_storage(&*source, &*destination).unwrap(),
+            MigrationOutcome::Migrated {
+                tasks: 2,
+                categories: 2
+            }
+        );
+
+        assert_eq!(destination.get_deleted_tasks().unwrap().len(), 1);
+        assert_eq!(destination.live_tasks().unwrap().len(), 1);
+    }
+
+    /// The file names are what keep the two backends from ever being pointed
+    /// at the same path (see `StorageType::data_file_name`), so they are worth
+    /// pinning: making them equal would silently re-open issue #17's original
+    /// "file is not a database" failure.
+    #[test]
+    fn test_each_backend_has_its_own_data_file_name() {
+        assert_ne!(
+            StorageType::Json.data_file_name(),
+            StorageType::Sqlite.data_file_name()
+        );
+        assert_eq!(StorageType::parse("json"), Some(StorageType::Json));
+        assert_eq!(StorageType::parse("sqlite"), Some(StorageType::Sqlite));
+        assert_eq!(StorageType::parse("postgres"), None);
+        assert_eq!(StorageType::Json.as_str(), "json");
+        assert_eq!(StorageType::Sqlite.as_str(), "sqlite");
+    }
 
     #[test]
     fn test_storage_creation() {
@@ -435,13 +774,19 @@ mod tests {
     /// not silent success/corruption (verified: the original JSON file is left
     /// byte-for-byte intact and still loads correctly afterwards). This is not a
     /// deliberate validation in this codebase, though - it's an accidental
-    /// byproduct of the SQLite file format having a magic header. There is no
-    /// equivalent protection in the *other* direction (JSON backend silently
+    /// byproduct of the SQLite file format having a magic header. There is still
+    /// no equivalent protection in the *other* direction (JSON backend silently
     /// overwriting an existing SQLite file via `std::fs::write` with no format
     /// check at all), and there is no format check at all for two files that
-    /// both happen to satisfy their respective format's parser. #17 should stay
-    /// open for that gap; this test just pins down the one direction that
-    /// already behaves correctly today so a future regression is caught.
+    /// both happen to satisfy their respective format's parser.
+    ///
+    /// That gap is no longer *reachable through configuration*: each backend
+    /// now owns a distinct file name inside the `storage.path` directory (see
+    /// `StorageType::data_file_name`, pinned by
+    /// `test_each_backend_has_its_own_data_file_name`), so the two can't be
+    /// aimed at one file. This test still pins the one direction that behaves
+    /// correctly at the storage layer itself, for anyone who constructs the
+    /// backends directly.
     #[test]
     fn test_sqlite_rejects_json_populated_file() {
         let temp_file = NamedTempFile::new().unwrap();
