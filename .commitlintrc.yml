@@ -1,0 +1,32 @@
+# Conventional Commits enforcement.
+#
+# Adopted deliberately rather than inherited: this repository's early history
+# used a `(feat)` / `(chore)` parenthesized style that later commits dropped,
+# leaving no consistent convention. Everything from PR #34 onward uses
+# standard Conventional Commits.
+#
+# Checked in CI by .github/workflows/rust.yml. There is no Node toolchain in
+# this repository and none is needed - the workflow runs commitlint in a
+# container.
+extends:
+  - '@commitlint/config-conventional'
+
+rules:
+  # The default 100-character subject cap is tight for a change that needs to
+  # name a command and its issue. 72 is the git convention for the subject
+  # line; allow a little more rather than encouraging truncation.
+  header-max-length: [2, always, 88]
+
+  # Scopes are optional, but when present should name the area touched, so
+  # the log reads as a table of contents. Not an enum: the module layout is
+  # still moving (see issue #19), and a stale enum would reject honest
+  # scopes.
+  scope-case: [2, always, kebab-case]
+
+  # `fix(storage): allow tasks in Uncategorized` - imperative, lower case, no
+  # trailing period. These are config-conventional defaults, restated here
+  # because they are the rules contributors trip over most.
+  subject-case: [2, never, [sentence-case, start-case, pascal-case, upper-case]]
+  subject-empty: [2, never]
+  subject-full-stop: [2, never, '.']
+  type-empty: [2, never]
