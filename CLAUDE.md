@@ -143,9 +143,6 @@ Open and deliberately not started:
   checklists with an exit condition. #20's real gap is backend parity: most
   behaviour is exercised against JSON only, which is how the SQLite
   foreign-key bug shipped.
-- **#35 binary name** — the README specifies `trtodo`, `Cargo.toml` builds
-  `trusty_rusty_todo_list`. Fix is a `[[bin]]` stanza plus a rename of
-  `CARGO_BIN_EXE_*` across all seven test files.
 - **#36 category rename orphans `default-category`** — the setting stores a
   name (IDs get recycled, which is worse), and nothing keeps it in step.
 - **#37 `JsonStorage::save` has no format check** — unreachable through
@@ -156,8 +153,7 @@ Open and deliberately not started:
 ## Rough edges and session cost
 
 `docs/WORKING-NOTES.md` covers what this file deliberately leaves out: known
-defects not yet filed (the binary is built as `trusty_rusty_todo_list`, not the
-documented `trtodo`; renaming a category orphans `default-category`), build
+defects not yet filed (renaming a category orphans `default-category`), build
 facts that surprise people (`cargo test --lib` fails — there is no lib target;
 `rusqlite` is bundled, so never delete `target/`), and the practices that keep
 an AI-assisted session from spending its budget re-deriving known things.
