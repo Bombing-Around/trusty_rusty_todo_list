@@ -26,7 +26,7 @@ from the real target name — but the documented install does not produce the
 documented command. By this repo's own rule (the README is the spec), this is
 a bug in `Cargo.toml`, not in the README.
 
-The fix is one stanza plus a mechanical rename:
+Filed as #35. The fix is one stanza plus a mechanical rename:
 
 ```toml
 [[bin]]
@@ -39,16 +39,16 @@ in all seven files under `tests/`. Deliberately not done yet: it is a real
 change with a blast radius, and it deserves its own commit rather than
 riding along with unrelated work.
 
-### Two gaps that are filed nowhere
+### Two further gaps
 
-- **Renaming a category orphans a `default-category` that names it.** The
+- **Renaming a category orphans a `default-category` that names it** (#36). The
   setting stores a name on purpose (IDs are handed back out after a delete,
   so a stored ID can silently start pointing at an unrelated category). The
   consequence is that `category update Work Werk` leaves
   `default-category=Work` dangling, and the next bare `add` fails to resolve
   it. Renaming should probably follow the setting across.
 
-- **`JsonStorage::save` is a bare `fs::write` with no format check.** Not
+- **`JsonStorage::save` is a bare `fs::write` with no format check** (#37). Not
   reachable through configuration now that each backend owns a distinct
   filename, but a direct constructor call could still have JSON clobber a
   SQLite file. The distinct filenames are what make this unreachable — see

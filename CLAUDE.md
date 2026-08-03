@@ -139,9 +139,19 @@ Open and deliberately not started:
 - **#19 split `config.rs`** — it does three jobs (key schema/validation,
   persistence, backend construction). Collides with anything else touching
   config, so do it on a quiet tree.
-- **#20 / #21 tests and doc comments** — partly self-resolving as features land;
-  worth re-scoping rather than treating "TEST ALL THE THINGS" as a spec.
-- **#4** is effectively resolved by #27 and can likely be closed with a pointer.
+- **#20 / #21 tests and doc comments** — re-scoped from open-ended wishes into
+  checklists with an exit condition. #20's real gap is backend parity: most
+  behaviour is exercised against JSON only, which is how the SQLite
+  foreign-key bug shipped.
+- **#35 binary name** — the README specifies `trtodo`, `Cargo.toml` builds
+  `trusty_rusty_todo_list`. Fix is a `[[bin]]` stanza plus a rename of
+  `CARGO_BIN_EXE_*` across all seven test files.
+- **#36 category rename orphans `default-category`** — the setting stores a
+  name (IDs get recycled, which is worse), and nothing keeps it in step.
+- **#37 `JsonStorage::save` has no format check** — unreachable through
+  configuration, guarded only by the distinct-filenames invariant above.
+
+#4 is closed: all four of its bullets landed.
 
 ## Rough edges and session cost
 
