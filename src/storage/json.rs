@@ -12,12 +12,60 @@ impl JsonStorage {
             path: path.as_ref().to_path_buf(),
         }
     }
+
+    /// Verifies that if a file exists at the target path and is non-empty, it
+    /// contains valid JSON and is not in SQLite format. This guard prevents
+    /// `save` from silently overwriting a SQLite database file (or any other
+    /// non-JSON file) with JSON data, losing the original contents.
+    ///
+    /// Returns `Ok(())` if the file is absent, empty, or contains valid JSON.
+    /// Returns `Err(StorageError::FormatMismatch)` if the file exists, is
+    /// non-empty, and fails format validation (SQLite magic bytes or invalid
+    /// JSON).
+    ///
+    /// This makes the guarantee local to the backend instead of depending on a
+    /// filename convention maintained elsewhere. While normal configuration
+    /// routes each backend to a distinct file (`trtodo-data.json` vs
+    /// `trtodo-data.db`), a direct `JsonStorage::new(...)` call with an
+    /// arbitrary path can reach any file. The check closes that gap.
+    fn validate_target_format(&self) -> Result<(), StorageError> {
+        if !self.path.exists() {
+            return Ok(());
+        }
+
+        // Read the file to check its format
+        let bytes = std::fs::read(&self.path)?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
+
+        // SQLite database files start with this 16-byte magic header.
+        const SQLITE_MAGIC: &[u8] = b"SQLite format 3\0";
+        if bytes.len() >= SQLITE_MAGIC.len() && &bytes[..SQLITE_MAGIC.len()] == SQLITE_MAGIC {
+            return Err(StorageError::FormatMismatch(
+                "target file is a SQLite database, not JSON".to_string(),
+            ));
+        }
+
+        // Attempt to parse as JSON to confirm it's valid. If this fails, the
+        // file exists and is non-empty but is not valid JSON - reject the write.
+        let contents = String::from_utf8_lossy(&bytes);
+        serde_json::from_str::<serde_json::Value>(&contents).map_err(|_| {
+            StorageError::FormatMismatch("target file exists and is not valid JSON".to_string())
+        })?;
+
+        Ok(())
+    }
 }
 
 impl Storage for JsonStorage {
     fn save(&self, data: &StorageData) -> Result<(), StorageError> {
         // Validate data before saving
         data.validate()?;
+
+        // Check that the target file (if it exists) is in JSON format, not
+        // SQLite or some other format.
+        self.validate_target_format()?;
 
         // Create parent directories if they don't exist
         if let Some(parent) = self.path.parent() {
@@ -264,5 +312,126 @@ mod tests {
         assert_eq!(loaded.tasks.len(), 1);
         assert_eq!(loaded.tasks[0].deleted_at, None);
         assert!(!loaded.tasks[0].is_deleted());
+    }
+
+    /// Attempting to save over a file containing SQLite magic bytes must fail
+    /// gracefully with a `FormatMismatch` error rather than silently overwriting
+    /// the SQLite database and destroying the data.
+    #[test]
+    fn test_save_rejects_sqlite_magic_bytes() {
+        let dir = tempdir().unwrap();
+        let json_path = dir.path().join("sqlite.db");
+
+        // Write SQLite magic bytes to the file
+        let sqlite_magic = b"SQLite format 3\0\x04\x00\x00\x00";
+        fs::write(&json_path, sqlite_magic).unwrap();
+        let original_contents = fs::read(&json_path).unwrap();
+
+        // Attempt to save JSON data over it; this must fail
+        let storage = JsonStorage::new(&json_path);
+        let test_data = create_test_data();
+        let result = storage.save(&test_data);
+
+        // Verify we got a format mismatch error
+        assert!(result.is_err());
+        match result {
+            Err(StorageError::FormatMismatch(msg)) => {
+                assert!(msg.contains("SQLite") || msg.contains("SQLite database"));
+            }
+            other => panic!("expected FormatMismatch error, got {:?}", other),
+        }
+
+        // Verify the file was not modified
+        let current_contents = fs::read(&json_path).unwrap();
+        assert_eq!(
+            original_contents, current_contents,
+            "file should not be modified when save rejects it"
+        );
+    }
+
+    /// Saving to a nonexistent path must work normally, creating the file.
+    #[test]
+    fn test_save_to_nonexistent_path_succeeds() {
+        let dir = tempdir().unwrap();
+        let json_path = dir.path().join("nonexistent.json");
+
+        assert!(!json_path.exists());
+
+        let storage = JsonStorage::new(&json_path);
+        let test_data = create_test_data();
+        storage.save(&test_data).unwrap();
+
+        assert!(json_path.exists());
+        let loaded = storage.load().unwrap();
+        assert_eq!(loaded.tasks.len(), 2);
+        assert_eq!(loaded.categories.len(), 2);
+    }
+
+    /// Saving over an existing valid JSON file must work normally, replacing
+    /// the old content with new data.
+    #[test]
+    fn test_save_over_existing_valid_json_succeeds() {
+        let dir = tempdir().unwrap();
+        let json_path = dir.path().join("existing.json");
+
+        let storage = JsonStorage::new(&json_path);
+
+        // Save initial data
+        let initial_data = create_test_data();
+        storage.save(&initial_data).unwrap();
+        let loaded = storage.load().unwrap();
+        assert_eq!(loaded.tasks.len(), 2);
+
+        // Create new data with different content
+        let mut new_data = StorageData::new();
+        let mut category = Category::new("New".to_string(), None).unwrap();
+        category.id = 1;
+        new_data.categories.push(category.clone());
+        let mut task = Task::new("New task".to_string(), 1, None, Priority::Low).unwrap();
+        task.id = 1;
+        new_data.tasks.push(task);
+
+        // Save over the existing file - this must succeed
+        storage.save(&new_data).unwrap();
+
+        // Verify the new data was written
+        let reloaded = storage.load().unwrap();
+        assert_eq!(reloaded.tasks.len(), 1);
+        assert_eq!(reloaded.categories.len(), 1);
+        assert_eq!(reloaded.tasks[0].title, "New task");
+    }
+
+    /// Attempting to save over a file with invalid JSON (not SQLite, but also
+    /// not valid JSON) must fail gracefully without modifying the file.
+    #[test]
+    fn test_save_rejects_invalid_json() {
+        let dir = tempdir().unwrap();
+        let json_path = dir.path().join("invalid.json");
+
+        // Write some invalid JSON to the file
+        let invalid_json = b"{ this is not valid json }";
+        fs::write(&json_path, invalid_json).unwrap();
+        let original_contents = fs::read(&json_path).unwrap();
+
+        // Attempt to save JSON data over it; this must fail
+        let storage = JsonStorage::new(&json_path);
+        let test_data = create_test_data();
+        let result = storage.save(&test_data);
+
+        // Verify we got a format mismatch error
+        assert!(result.is_err());
+        match result {
+            Err(StorageError::FormatMismatch(msg)) => {
+                assert!(msg.contains("not valid JSON"));
+            }
+            other => panic!("expected FormatMismatch error, got {:?}", other),
+        }
+
+        // Verify the file was not modified
+        let current_contents = fs::read(&json_path).unwrap();
+        assert_eq!(
+            original_contents, current_contents,
+            "file should not be modified when save rejects it"
+        );
     }
 }
