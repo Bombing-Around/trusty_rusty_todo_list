@@ -811,6 +811,55 @@ mod tests {
         );
     }
 
+    /// The mirror-image direction: attempting to save JSON data over an existing
+    /// SQLite database file must fail gracefully and not clobber the original.
+    /// This direction was not checked at the storage layer before - it relied on
+    /// distinct filenames in configuration to remain unreachable. This test pins
+    /// the protection added to `JsonStorage::save`.
+    #[test]
+    fn test_json_rejects_sqlite_populated_file() {
+        let temp_file = NamedTempFile::new().unwrap();
+
+        // Populate the file with real data through the SQLite backend.
+        let sqlite_storage = create_storage(StorageType::Sqlite, temp_file.path()).unwrap();
+        let mut data = StorageData::new();
+        let mut category = Category::new("Work".to_string(), None).unwrap();
+        category.id = 1;
+        data.categories.push(category.clone());
+        let mut task =
+            Task::new("Test task".to_string(), category.id, None, Priority::Medium).unwrap();
+        task.id = 1;
+        data.tasks.push(task);
+        sqlite_storage.save(&data).unwrap();
+
+        // Read the file to verify it has SQLite magic bytes.
+        let file_contents = std::fs::read(temp_file.path()).unwrap();
+        assert!(
+            file_contents.len() >= 16 && &file_contents[..16] == b"SQLite format 3\0",
+            "expected SQLite magic bytes in file"
+        );
+
+        // Pointing JSON storage at a file that already holds SQLite data
+        // must be rejected gracefully with a typed StorageError - never a
+        // panic, and never a silent success that silently overwrites the
+        // SQLite database.
+        let json_storage = create_storage(StorageType::Json, temp_file.path()).unwrap();
+        let new_data = StorageData::new();
+        let result = json_storage.save(&new_data);
+
+        assert!(
+            result.is_err(),
+            "expected a graceful StorageError when saving JSON to a SQLite-populated file, got Ok(..)"
+        );
+
+        // Verify the file still contains SQLite data (not clobbered).
+        let file_after = std::fs::read(temp_file.path()).unwrap();
+        assert_eq!(
+            file_contents, file_after,
+            "SQLite file should not be modified when JSON save is rejected"
+        );
+    }
+
     /// Regression test: deleting a *category* reassigns its tasks
     /// to the magic "Uncategorized" ID (`category_manager::UNCATEGORIZED_ID`,
     /// which is 0). Before this fix, `get_deleted_tasks` treated

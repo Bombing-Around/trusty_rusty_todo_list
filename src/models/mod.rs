@@ -315,4 +315,6 @@ pub enum StorageError {
     InvalidTaskCategory(u64, u64),
     #[error("Duplicate category name: {0}")]
     DuplicateCategory(String),
+    #[error("File format mismatch: {0}")]
+    FormatMismatch(String),
 }
