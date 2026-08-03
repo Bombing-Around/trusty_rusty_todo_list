@@ -22,7 +22,7 @@ The binary named `trtodo` will accept various arguments
 
 | Command                                                                                               | Description                                                                                                                               |
 | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `trtodo add <title> --category <category_name or category_id> (or -c) [--priority <high|medium|low>]` | Add a new task with the given title and optional priority                                                                                 |
+| `trtodo add <title> [--category <category_name or category_id> (or -c)] [--priority <high|medium|low>]` | Add a new task with the given title and optional priority. Omitting `--category` uses the current category context, else `default-category`, else Uncategorized |
 | `trtodo delete <title or id> [--category <category_name or category_id> (or -c)]`                     | Delete the task with the given title                                                                                                      |
 | `trtodo update <title or id> --to <new_title> [--category <category_name or category_id> (or -c)]`    | Update the task with the given title                                                                                                      |
 | `trtodo check (x, mark) <title or id> --category <category_name or category_id> (or -c)`              | Check off the task with the given title                                                                                                   |
@@ -65,6 +65,8 @@ When deleting a category it is removed and its ID is made available again. All a
 
 Category context (set via `category use`) persists between runs of the application. When in a category context, commands that require category specification can omit the `--category` argument.
 
+`add` cannot fall back to searching every category the way `delete`/`update`/`check`/`uncheck` do - a new task has to land somewhere definite - so it resolves its category in strict order: an explicit `--category`, then the current category context, then the `default-category` config value, then Uncategorized. The category context deliberately outranks `default-category`: `category use` is a deliberate "I am working here right now", so `category use` temporarily overrides the configured default and `category clear` returns to it.
+
 ## Configuration Values
 
 Configuration values are stored in `trtodo-config.json`. By default it's written to a config folder unless it's first read in your home directory. 
@@ -74,7 +76,7 @@ Configuration values are stored in `trtodo-config.json`. By default it's written
 | `deleted-task-lifespan` | `0`                | integer<1..?>       | Number of days before task in Deleted category are deleted. A value of 0, the default, indicates they are never automatically deleted |
 | `storage.type`          | `json`             | `json\|sqlite`      | Type of storage backend to use                                                                                                        |
 | `storage.path`          | `~/.config/trtodo` | string              | Path to storage location                                                                                                              |
-| `default-category`      | `null`             | string              | Default category to use when no category is specified                                                                                 |
+| `default-category`      | `null`             | string              | Category `add` files new tasks into when no `--category` is given and no category context is set. Must name an existing category (by name or ID) - `add` reports an error rather than guessing if it no longer resolves. Renaming a category does not update this setting |
 | `default-priority`      | `medium`           | `high\|medium\|low` | Default priority for new tasks                                                                                                        |
 
 ### Storage backends

@@ -115,6 +115,125 @@ fn add_defaults_priority_from_config_and_lists_it() {
     );
 }
 
+/// Issue #33: `--category` is optional on `add`, and the four resolution
+/// steps must be tried in order, most specific first.
+#[test]
+fn add_resolves_its_category_in_precedence_order() {
+    let trtodo = Trtodo::new();
+    trtodo.ok(&["category", "add", "Work"]);
+    trtodo.ok(&["category", "add", "Home"]);
+    trtodo.ok(&["category", "add", "Errands"]);
+
+    // Step 4: nothing set at all - no --category, no context, no
+    // default-category - so the task is simply uncategorized rather than an
+    // error.
+    let out = trtodo.ok(&["add", "Loose task"]);
+    assert!(out.contains("in category 'Uncategorized'"), "{out}");
+
+    // Step 3: `default-category` now supplies it. This is the step that did
+    // not exist before - the setting was stored, validated and listed, but
+    // never read by anything.
+    trtodo.ok(&["config", "set", "default-category=Errands"]);
+    let out = trtodo.ok(&["add", "Configured task"]);
+    assert!(out.contains("in category 'Errands'"), "{out}");
+
+    // Step 2: an explicit `category use` context outranks the configured
+    // default - transient intent beats persistent configuration.
+    trtodo.ok(&["category", "use", "Home"]);
+    let out = trtodo.ok(&["add", "Context task"]);
+    assert!(out.contains("in category 'Home'"), "{out}");
+
+    // Step 1: an explicit --category outranks both.
+    let out = trtodo.ok(&["add", "Explicit task", "--category", "Work"]);
+    assert!(out.contains("in category 'Work'"), "{out}");
+
+    // Clearing the context falls back to the configured default again, rather
+    // than to Uncategorized - the two settings do not consume each other.
+    trtodo.ok(&["category", "clear"]);
+    let out = trtodo.ok(&["add", "Back to default"]);
+    assert!(out.contains("in category 'Errands'"), "{out}");
+
+    // And unsetting the default falls the rest of the way to Uncategorized.
+    trtodo.ok(&["config", "default", "default-category"]);
+    let out = trtodo.ok(&["add", "Truly loose"]);
+    assert!(out.contains("in category 'Uncategorized'"), "{out}");
+
+    let out = trtodo.ok(&["list"]);
+    assert!(
+        out.contains("Loose task (priority: medium, category: Uncategorized)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("Configured task (priority: medium, category: Errands)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("Context task (priority: medium, category: Home)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("Explicit task (priority: medium, category: Work)"),
+        "{out}"
+    );
+}
+
+/// `default-category` is stored without being validated against the category
+/// list, and a category that existed when it was set can be deleted later, so
+/// `add` has to cope with a default that does not resolve. It refuses rather
+/// than quietly filing the task under Uncategorized.
+#[test]
+fn add_errors_when_the_configured_default_category_does_not_resolve() {
+    let trtodo = Trtodo::new();
+
+    // A name that never existed - `config set` accepts it happily.
+    trtodo.ok(&["config", "set", "default-category=Ghost"]);
+    let err = trtodo.fail(&["add", "Orphaned task"]);
+    assert!(err.contains("default-category"), "{err}");
+    assert!(err.contains("Ghost"), "{err}");
+    // The message has to be actionable, since the user cannot see which of the
+    // four steps was reached.
+    assert!(err.contains("--category"), "{err}");
+
+    // Nothing was written: refusing must not half-succeed.
+    let out = trtodo.ok(&["list"]);
+    assert!(!out.contains("Orphaned task"), "{out}");
+
+    // A broken default only breaks the `add`s that actually fall through to
+    // it - an explicit --category still works.
+    trtodo.ok(&["category", "add", "Work"]);
+    let out = trtodo.ok(&["add", "Explicit task", "--category", "Work"]);
+    assert!(out.contains("in category 'Work'"), "{out}");
+
+    // ...as does a `category use` context, which is resolved one step earlier.
+    trtodo.ok(&["category", "use", "Work"]);
+    let out = trtodo.ok(&["add", "Context task"]);
+    assert!(out.contains("in category 'Work'"), "{out}");
+
+    // A default that was valid when set but whose category has since been
+    // deleted behaves the same way - which is why validating at `config set`
+    // time would not have been enough.
+    trtodo.ok(&["category", "clear"]);
+    trtodo.ok(&["category", "add", "Temporary"]);
+    trtodo.ok(&["config", "set", "default-category=Temporary"]);
+    trtodo.ok(&["add", "Fine for now"]);
+    trtodo.ok(&["category", "delete", "Temporary"]);
+    let err = trtodo.fail(&["add", "Too late"]);
+    assert!(err.contains("Temporary"), "{err}");
+}
+
+/// `default-category` may name a category by ID as well as by name, since it
+/// goes through the same resolution as `--category`.
+#[test]
+fn add_accepts_a_default_category_given_as_an_id() {
+    let trtodo = Trtodo::new();
+    let out = trtodo.ok(&["category", "add", "Work"]);
+    assert!(out.contains("added with ID 1"), "{out}");
+
+    trtodo.ok(&["config", "set", "default-category=1"]);
+    let out = trtodo.ok(&["add", "By ID"]);
+    assert!(out.contains("in category 'Work'"), "{out}");
+}
+
 #[test]
 fn add_can_target_the_uncategorized_category_by_name_or_id() {
     let trtodo = Trtodo::new();

@@ -316,7 +316,21 @@ impl ConfigManager {
                 config.storage_path = Some(path.to_string_lossy().to_string());
             }
             "default-category" => {
-                // Note: Category validation would happen here once we have access to the storage layer
+                // Still stored without checking that the category exists, and
+                // deliberately so. `ConfigManager` owns the *config* store
+                // only; the categories live in the task store, which is opened
+                // from `storage.type`/`storage.path` - config values this very
+                // method may be in the middle of changing. Validating here
+                // would mean opening (and creating) task storage as a side
+                // effect of `config set`, which is the one command that today
+                // never touches it (see `main::open_storage`).
+                //
+                // Validation would also be worth less than it looks:
+                // categories can be deleted after the fact, so a check here
+                // could never make the value trustworthy at the point of use.
+                // `main::resolve_add_category` therefore resolves it - and
+                // reports it as an error - when `add` actually falls through
+                // to it (issue #33).
                 config.default_category = Some(value.to_string());
             }
             "default-priority" => {

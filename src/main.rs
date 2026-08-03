@@ -80,6 +80,26 @@ pub enum CliError {
          non-interactively ('deleted list' shows what would be destroyed)"
     )]
     FlushNotConfirmed,
+    /// `default-category` is persisted without ever being checked against the
+    /// category list - `ConfigManager::set` has no access to task storage, and
+    /// even a name that was valid when it was set can be deleted afterwards.
+    /// So `add` can reach step 3 of `resolve_add_category` and find nothing
+    /// there.
+    ///
+    /// This is an error rather than a warning-and-fall-through to
+    /// Uncategorized: the user named a destination for their new tasks, and
+    /// quietly filing one somewhere else is the single outcome they are least
+    /// likely to notice. It is also the consistent choice - an explicit
+    /// `--category NoSuchThing` is already a hard error via
+    /// `resolve_category`, and `default-category` is the same act of naming a
+    /// category, just written down in advance. Erroring costs the user one
+    /// re-run; a misfiled task costs them finding it again.
+    #[error(
+        "config 'default-category' names a category that does not exist: '{0}'; \
+         create it, point 'default-category' at an existing category, or pass \
+         --category explicitly"
+    )]
+    UnresolvableDefaultCategory(String),
 }
 
 fn main() {
@@ -577,6 +597,76 @@ fn resolve_default_priority(config_manager: &ConfigManager) -> Result<Priority, 
     Ok(Priority::from_str(&value)?)
 }
 
+/// Resolves the category a task created by `add` should land in (issue #33).
+///
+/// `add` is the odd one out among the task commands: `Delete`, `Update`,
+/// `Check`, and `Uncheck` can all degrade to an unscoped search (see
+/// `resolve_task_scope`) because they have an existing task to find, but a
+/// *new* task has to be written somewhere definite. So instead of degrading,
+/// `add` walks a strict precedence chain, most specific first:
+///
+/// 1. an explicit `--category`,
+/// 2. the `category use` context, if one has actually been set,
+/// 3. the `default-category` config value,
+/// 4. Uncategorized.
+///
+/// Step 2 outranking step 3 is deliberate. `category use` is a transient,
+/// just-made statement of "I am working in here right now"; `default-category`
+/// is persistent background configuration set once and then forgotten. Letting
+/// the config win would make the README's promise that "when in a category
+/// context, commands that require category specification can omit the
+/// `--category` argument" quietly untrue for `add` alone, and would leave the
+/// user no way to work outside their default without typing `--category` every
+/// time. In the chosen order both settings stay reachable: `category use` to
+/// override the default for a while, `category clear` to fall back to it
+/// again.
+///
+/// Note step 2 checks `has_explicit_category_context` rather than reading
+/// `get_current_category` directly, exactly as `resolve_task_scope` and
+/// `require_category_context` do. `get_current_category` answers
+/// `Some(UNCATEGORIZED_ID)` even when no context was ever set, so using it
+/// here would collapse step 2 into step 4 and make steps 3 and 4 dead code -
+/// `default-category` would go on being ignored, which is the entire bug this
+/// resolves.
+///
+/// Returns an ID rather than a `Category` so a context pointing at a category
+/// that has since vanished prints the same way `list` does (see
+/// `category_display_name`) instead of needing a second failure mode here.
+fn resolve_add_category(
+    category_manager: &CategoryManager,
+    config_manager: &ConfigManager,
+    category: Option<String>,
+) -> Result<u64, CliError> {
+    // 1. An explicit `--category` always wins, and an unresolvable one is an
+    //    error - unchanged behaviour from when this argument was mandatory.
+    if let Some(reference) = category {
+        return Ok(resolve_category(category_manager, &reference)?.id);
+    }
+
+    // 2. The `category use` context, but only if one was really set.
+    if category_manager.has_explicit_category_context() {
+        return Ok(category_manager
+            .get_current_category()
+            .expect("has_explicit_category_context() true implies Some(..)"));
+    }
+
+    // 3. The configured `default-category`. It stores a *name* (or ID) rather
+    //    than a resolved ID on purpose: category IDs are handed back out after
+    //    a delete (issue #16), so a stored ID could silently start pointing at
+    //    an unrelated category, whereas a stored name can only ever fail to
+    //    resolve - a failure we can report. `ConfigManager::get` returns the
+    //    effective value, and `default-category` has no documented default, so
+    //    `None` here genuinely means "the user never set one".
+    if let Some(reference) = config_manager.get("default-category") {
+        return resolve_category(category_manager, &reference)
+            .map(|category| category.id)
+            .map_err(|_| CliError::UnresolvableDefaultCategory(reference));
+    }
+
+    // 4. Nothing said otherwise, so the task is simply uncategorized.
+    Ok(UNCATEGORIZED_ID)
+}
+
 /// Resolves the scope `Delete`, `Update`, `Check`, and `Uncheck` should
 /// search within, per the README: the explicit `--category` if given,
 /// otherwise the current category context if one has been set via `category
@@ -671,15 +761,20 @@ fn run_task_command(
             category,
             priority,
         } => {
-            let category = resolve_category(&category_manager, &category)?;
+            let category_id = resolve_add_category(&category_manager, config_manager, category)?;
             let priority = match priority {
                 Some(p) => to_model_priority(p),
                 None => resolve_default_priority(config_manager)?,
             };
-            let id = task_manager.add_task(title.clone(), category.id, priority, None)?;
+            let id = task_manager.add_task(title.clone(), category_id, priority, None)?;
+            // Always name the category that was actually used, even when the
+            // user did not: with `--category` now optional, the confirmation
+            // line is how they find out which of the four resolution steps
+            // won.
+            let category_name = category_display_name(&category_manager, category_id)?;
             println!(
                 "Task '{}' added with ID {} in category '{}'",
-                title, id, category.name
+                title, id, category_name
             );
         }
         Commands::Delete {

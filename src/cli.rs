@@ -32,9 +32,10 @@ pub enum Commands {
     Add {
         /// Title of the task
         title: String,
-        /// Category name or ID
+        /// Category name or ID. Omit to use the current category context, then
+        /// the `default-category` config value, then Uncategorized.
         #[arg(short = 'c', long = "category")]
-        category: String,
+        category: Option<String>,
         /// Priority level
         #[arg(short = 'p', long = "priority")]
         priority: Option<Priority>,
@@ -275,7 +276,23 @@ mod tests {
                 priority,
             } => {
                 assert_eq!(title, "Buy milk");
-                assert_eq!(category, "Home");
+                assert_eq!(category, Some("Home".to_string()));
+                assert!(priority.is_none());
+            }
+            _ => panic!("Expected Add command"),
+        }
+
+        // `--category` is optional (issue #33): omitting it parses cleanly and
+        // leaves resolution to `main::resolve_add_category`.
+        let cli = parse_args(&["trtodo", "add", "Buy milk"]);
+        match cli.command {
+            Commands::Add {
+                title,
+                category,
+                priority,
+            } => {
+                assert_eq!(title, "Buy milk");
+                assert!(category.is_none());
                 assert!(priority.is_none());
             }
             _ => panic!("Expected Add command"),
@@ -298,7 +315,7 @@ mod tests {
                 priority,
             } => {
                 assert_eq!(title, "Buy milk");
-                assert_eq!(category, "Home");
+                assert_eq!(category, Some("Home".to_string()));
                 assert_eq!(priority, Some(Priority::High));
             }
             _ => panic!("Expected Add command"),
@@ -453,8 +470,16 @@ mod tests {
 
     #[test]
     fn test_required_arguments() {
-        // Test that category is required for add command
+        // `add` used to require `--category`; issue #33 made it optional so
+        // the `category use` context and the `default-category` config value
+        // can supply it. Parsing must therefore *succeed* without it - the
+        // decision of where the task lands moved to `main`, which has the
+        // storage and config access needed to make it.
         let result = try_parse_args(&["trtodo", "add", "Buy milk"]);
+        assert!(result.is_ok());
+
+        // A title is still required, though: nothing can supply that.
+        let result = try_parse_args(&["trtodo", "add"]);
         assert!(result.is_err());
 
         // Test that priority must be valid
