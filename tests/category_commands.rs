@@ -108,6 +108,87 @@ fn category_lifecycle() {
     assert!(err.contains("Nope"), "{err}");
 }
 
+/// Renaming the category that `default-category` names must carry the
+/// setting along, rather than leaving it pointed at a name that no longer
+/// resolves to anything.
+#[test]
+fn category_update_carries_default_category_along() {
+    let trtodo = Trtodo::new();
+    trtodo.ok(&["category", "add", "Work"]);
+    trtodo.ok(&["config", "set", "default-category=Work"]);
+
+    let out = trtodo.ok(&["category", "update", "Work", "Werk"]);
+    assert!(
+        out.contains("Updated config 'default-category' to 'Werk'"),
+        "{out}"
+    );
+
+    // The setting now names the renamed category...
+    let out = trtodo.ok(&["config", "list"]);
+    assert!(out.contains("default-category = Werk"), "{out}");
+
+    // ...and a bare `add` resolves it rather than erroring, landing the task
+    // in the renamed category.
+    let out = trtodo.ok(&["add", "Buy milk"]);
+    assert!(out.contains("in category 'Werk'"), "{out}");
+
+    let out = trtodo.ok(&["list"]);
+    assert!(
+        out.contains("Buy milk (priority: medium, category: Werk)"),
+        "{out}"
+    );
+}
+
+/// Renaming some *other* category must not disturb `default-category` -
+/// only a rename of the category it actually names carries it along.
+#[test]
+fn category_update_leaves_unrelated_default_category_alone() {
+    let trtodo = Trtodo::new();
+    trtodo.ok(&["category", "add", "Work"]);
+    trtodo.ok(&["category", "add", "Home"]);
+    trtodo.ok(&["config", "set", "default-category=Work"]);
+
+    let out = trtodo.ok(&["category", "update", "Home", "Personal"]);
+    assert!(!out.contains("default-category"), "{out}");
+
+    let out = trtodo.ok(&["config", "list"]);
+    assert!(out.contains("default-category = Work"), "{out}");
+}
+
+/// With `default-category` unset, a rename has nothing to carry along and
+/// must not fabricate a value.
+#[test]
+fn category_update_with_no_default_category_set_is_a_no_op_for_config() {
+    let trtodo = Trtodo::new();
+    trtodo.ok(&["category", "add", "Work"]);
+
+    let out = trtodo.ok(&["category", "update", "Work", "Werk"]);
+    assert!(!out.contains("default-category"), "{out}");
+
+    let out = trtodo.ok(&["config", "list"]);
+    assert!(out.contains("*default-category = null"), "{out}");
+}
+
+/// The comparison between the stored `default-category` and the category
+/// being renamed is case-insensitive, matching how category names are
+/// matched everywhere else in this codebase (duplicate detection, `--category`
+/// resolution).
+#[test]
+fn category_update_matches_default_category_case_insensitively() {
+    let trtodo = Trtodo::new();
+    trtodo.ok(&["category", "add", "Work"]);
+    trtodo.ok(&["config", "set", "default-category=work"]);
+
+    let out = trtodo.ok(&["category", "update", "Work", "Werk"]);
+    assert!(
+        out.contains("Updated config 'default-category' to 'Werk'"),
+        "{out}"
+    );
+
+    let out = trtodo.ok(&["config", "list"]);
+    assert!(out.contains("default-category = Werk"), "{out}");
+}
+
 #[test]
 fn category_context_persists_between_runs() {
     let trtodo = Trtodo::new();
