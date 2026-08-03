@@ -14,9 +14,6 @@ pub enum ConfigError {
     InvalidConfig(String),
     #[error("Storage error: {0}")]
     Storage(String),
-    #[error("Migration error: {0}")]
-    #[allow(dead_code)]
-    Migration(String),
     #[error("Invalid key: {0}")]
     InvalidKey(String),
 }
@@ -134,6 +131,20 @@ pub struct Config {
     pub default_category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_priority: Option<String>,
+    /// The first-run marker: `Some(true)` records that the
+    /// offer to create the default "Home"/"Work" categories has already been
+    /// resolved (accepted, declined, or found unnecessary because categories
+    /// already existed), so it is never made a second time.
+    ///
+    /// This is bookkeeping, not a preference, so it is deliberately absent
+    /// from `ConfigManager::{get, set, unset, list}` and from the README's
+    /// configuration table: `config list` stays a faithful rendering of that
+    /// table, and there is no user-facing key whose meaning we would have to
+    /// define. It is still plain JSON in the same file, so anyone who wants
+    /// the offer back can delete the line (or set it to `false`, which reads
+    /// as "not yet offered" - see `Config::default_categories_offered`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_categories_offered: Option<bool>,
 }
 
 impl Config {
@@ -146,9 +157,9 @@ impl Config {
     /// be populated with resolved defaults.
     ///
     /// Deliberately distinct from `Config::default()`: collapsing "unset"
-    /// and "documented default" into one value is exactly the bug in issue
-    /// #22 (it makes `config list` unable to tell "you set this" from "this
-    /// is a fallback").
+    /// and "documented default" into one value is a bug that has bitten
+    /// this code before (it makes `config list` unable to tell "you set
+    /// this" from "this is a fallback").
     pub fn unset() -> Self {
         Self {
             deleted_task_lifespan: None,
@@ -156,7 +167,17 @@ impl Config {
             storage_path: None,
             default_category: None,
             default_priority: None,
+            default_categories_offered: None,
         }
+    }
+
+    /// Whether the first-run offer of the default "Home"/"Work" categories
+    /// has already been resolved and must not be made again.
+    ///
+    /// Anything other than a stored `true` - the key absent (a genuinely
+    /// fresh install), or an explicit `false` - means "not yet offered".
+    pub fn default_categories_offered(&self) -> bool {
+        self.default_categories_offered.unwrap_or(false)
     }
 
     /// Resolves every unset field to its documented default, leaving any
@@ -173,6 +194,9 @@ impl Config {
             storage_path: self.storage_path.clone().or(defaults.storage_path),
             default_category: self.default_category.clone().or(defaults.default_category),
             default_priority: self.default_priority.clone().or(defaults.default_priority),
+            // Not a documented setting with a default value - "unset" is the
+            // whole signal here, so it is carried through untouched.
+            default_categories_offered: self.default_categories_offered,
         }
     }
 
@@ -203,6 +227,10 @@ impl Default for Config {
             // `default-category` has no documented default (README: `null`).
             default_category: None,
             default_priority: default_priority(),
+            // Not a user-facing setting: an unset marker means "the first-run
+            // offer hasn't been made yet", which is exactly right for a
+            // fresh install.
+            default_categories_offered: None,
         }
     }
 }
@@ -234,7 +262,6 @@ fn default_priority() -> Option<String> {
 
 pub struct ConfigManager {
     storage: Box<dyn Storage>,
-    old_storage_type: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -253,10 +280,7 @@ impl ConfigManager {
             ConfigStorage::new(&config_path).map_err(|e| ConfigError::Storage(e.to_string()))?;
         let storage = Box::new(storage);
 
-        Ok(Self {
-            storage,
-            old_storage_type: None,
-        })
+        Ok(Self { storage })
     }
 
     pub fn save(&self) -> Result<(), ConfigError> {
@@ -290,6 +314,36 @@ impl ConfigManager {
         }
     }
 
+    /// Whether the first-run offer of the default "Home"/"Work" categories
+    /// has already been resolved.
+    ///
+    /// Reads the *stored* config, never the effective one: the point of the
+    /// marker is to distinguish "nothing has ever been written here" from
+    /// "the user answered", and resolving it through defaults would erase
+    /// exactly that distinction.
+    pub fn default_categories_offered(&self) -> bool {
+        self.stored_config().default_categories_offered()
+    }
+
+    /// Records that the first-run offer has been resolved, so no later run
+    /// makes it again - including after the user deliberately deletes every
+    /// category, which is a legitimate empty state and not a fresh install.
+    ///
+    /// Deliberately not reachable through `set`: this is bookkeeping rather
+    /// than a documented configuration key (see `Config`).
+    pub fn record_default_categories_offer(&mut self) -> Result<(), ConfigError> {
+        // Load-mutate-save, like `set`, so any keys the user has already
+        // stored survive.
+        let mut data = self
+            .storage
+            .load()
+            .map_err(|e| ConfigError::Storage(e.to_string()))?;
+        data.config.default_categories_offered = Some(true);
+        self.storage
+            .save(&data)
+            .map_err(|e| ConfigError::Storage(e.to_string()))
+    }
+
     pub fn set(&mut self, key: &str, value: &str) -> Result<(), ConfigError> {
         let mut data = self
             .storage
@@ -302,19 +356,42 @@ impl ConfigManager {
                 let value = validate_lifespan(value)?;
                 config.deleted_task_lifespan = Some(value);
             }
+            // Note what is deliberately *not* here: this used to also print
+            // "Warning: Changing storage type may require data migration" on
+            // every single `set`, and stash the outgoing value in an
+            // `old_storage_type` field feeding `needs_migration()` /
+            // `get_migration_info()` that nothing ever called. The warning
+            // named a migration that did not exist, fired even when there was
+            // no data to migrate, and told the user nothing they could act
+            // on. Moving the data is now a real, tested step
+            // (`main::carry_data_across_backend_switch`), and it runs *before*
+            // this method so a failure leaves the setting - and therefore the
+            // user's view of their data - unchanged. Anything it needs to say
+            // about the switch, it says itself and accurately.
             "storage.type" => {
                 validate_storage_type(value)?;
-                // Store old storage type for potential migration
-                self.old_storage_type = Some(config.storage_type.clone().unwrap_or_default());
                 config.storage_type = Some(value.to_string());
-                eprintln!("Warning: Changing storage type may require data migration");
             }
             "storage.path" => {
                 let path = validate_storage_path(value)?;
                 config.storage_path = Some(path.to_string_lossy().to_string());
             }
             "default-category" => {
-                // Note: Category validation would happen here once we have access to the storage layer
+                // Still stored without checking that the category exists, and
+                // deliberately so. `ConfigManager` owns the *config* store
+                // only; the categories live in the task store, which is opened
+                // from `storage.type`/`storage.path` - config values this very
+                // method may be in the middle of changing. Validating here
+                // would mean opening (and creating) task storage as a side
+                // effect of `config set`, which is the one command that today
+                // never touches it (see `main::open_storage`).
+                //
+                // Validation would also be worth less than it looks:
+                // categories can be deleted after the fact, so a check here
+                // could never make the value trustworthy at the point of use.
+                // `main::resolve_add_category` therefore resolves it - and
+                // reports it as an error - when `add` actually falls through
+                // to it.
                 config.default_category = Some(value.to_string());
             }
             "default-priority" => {
@@ -404,34 +481,6 @@ impl ConfigManager {
         ]
     }
 
-    #[allow(dead_code)]
-    pub fn needs_migration(&self) -> bool {
-        self.old_storage_type.is_some()
-            && self.old_storage_type.as_ref()
-                != Some(
-                    &self
-                        .stored_config()
-                        .storage_type
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_default(),
-                )
-    }
-
-    #[allow(dead_code)]
-    pub fn get_migration_info(&self) -> Option<(String, String)> {
-        self.old_storage_type.as_ref().map(|old_type| {
-            (
-                old_type.clone(),
-                self.stored_config()
-                    .storage_type
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_default(),
-            )
-        })
-    }
-
     /// The raw, on-disk config: `None` fields are genuinely unset.
     fn stored_config(&self) -> Config {
         self.storage.load().unwrap().config
@@ -485,7 +534,7 @@ mod tests {
     }
 
     // Previously asserted `None` for every key on a fresh config file - that
-    // encoded the issue #22 bug (documented defaults were never applied).
+    // encoded the bug where documented defaults were never applied.
     // `ConfigManager::get` returns the *effective* value, so a fresh install
     // must report the README's documented defaults, not `None`.
     // `default-category` has no documented default, so `None` there is
@@ -503,8 +552,8 @@ mod tests {
 
     // Previously only asserted that every key reports as a default (still
     // true - nothing has been set), but not *what* the printed value is,
-    // which is exactly what issue #22 got wrong (the value was `null`
-    // instead of the documented default).
+    // which is exactly what the earlier implementation got wrong (the value
+    // was `null` instead of the documented default).
     #[test]
     fn test_config_manager_list() {
         let temp_file = NamedTempFile::new().unwrap();
@@ -521,7 +570,7 @@ mod tests {
         assert_eq!(value_of("default-priority"), "medium");
     }
 
-    /// Regression test for issue #22's second, easier-to-miss half: once
+    /// Regression test for the second, easier-to-miss half of that bug: once
     /// *any* key has been `set`, the config file exists and every other key
     /// must still report as a default on the next load - not as an explicit
     /// `null` that beats the `#[serde(default)]` helper. A bare `impl
@@ -560,7 +609,7 @@ mod tests {
 
     /// `Config::default()` (the documented, *effective* defaults) and
     /// `Config::unset()` (nothing stored yet) must never collapse into the
-    /// same value - doing so is exactly the bug in issue #22.
+    /// same value - doing so is exactly the bug described on `unset`.
     #[test]
     fn test_default_and_unset_are_distinct() {
         let defaults = Config::default();
@@ -575,5 +624,71 @@ mod tests {
         assert_eq!(unset.storage_path, None);
         assert_eq!(unset.default_category, None);
         assert_eq!(unset.default_priority, None);
+    }
+
+    /// A fresh config (nothing stored) must report the first-run
+    /// offer as *not* made, and recording it must survive into the next
+    /// process invocation - that persistence is the whole mechanism that
+    /// stops the offer being repeated.
+    #[test]
+    fn test_default_categories_offer_marker_persists() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        let mut manager = ConfigManager::new(Some(&config_path)).unwrap();
+        assert!(!manager.default_categories_offered());
+        assert!(
+            !config_path.exists(),
+            "merely asking must not create the config file"
+        );
+
+        manager.record_default_categories_offer().unwrap();
+        assert!(manager.default_categories_offered());
+
+        let manager = ConfigManager::new(Some(&config_path)).unwrap();
+        assert!(manager.default_categories_offered());
+    }
+
+    /// The marker is bookkeeping, not a documented setting: it must not
+    /// appear in `config list` (which mirrors the README's configuration
+    /// table) and must not be reachable through `set` / `default`.
+    #[test]
+    fn test_default_categories_offer_marker_is_not_a_user_facing_key() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        let mut manager = ConfigManager::new(Some(&config_path)).unwrap();
+        manager.record_default_categories_offer().unwrap();
+
+        let list = manager.list();
+        assert_eq!(list.len(), 5);
+        assert!(!list
+            .iter()
+            .any(|(key, _, _)| key.contains("default-categories")));
+        assert_eq!(manager.get("default-categories-offered"), None);
+        assert!(manager.set("default-categories-offered", "false").is_err());
+        assert!(manager.unset("default-categories-offered").is_err());
+    }
+
+    /// Recording the marker must not disturb settings the user already
+    /// stored, and setting a key afterwards must not wipe the marker - both
+    /// halves of the load-mutate-save round trip.
+    #[test]
+    fn test_recording_the_marker_preserves_other_keys_and_vice_versa() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+
+        let mut manager = ConfigManager::new(Some(&config_path)).unwrap();
+        manager.set("default-priority", "high").unwrap();
+        manager.record_default_categories_offer().unwrap();
+        assert_eq!(manager.get("default-priority"), Some("high".to_string()));
+
+        manager.set("deleted-task-lifespan", "7").unwrap();
+        assert!(manager.default_categories_offered());
+
+        let manager = ConfigManager::new(Some(&config_path)).unwrap();
+        assert!(manager.default_categories_offered());
+        assert_eq!(manager.get("default-priority"), Some("high".to_string()));
+        assert_eq!(manager.get("deleted-task-lifespan"), Some("7".to_string()));
     }
 }

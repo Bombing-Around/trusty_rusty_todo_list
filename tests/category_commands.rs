@@ -97,7 +97,7 @@ fn category_lifecycle() {
     assert!(out.contains("2: Personal"), "{out}");
     assert!(!out.contains("Home"), "{out}");
 
-    // Delete frees the ID again (issue #16)
+    // Delete frees the ID again
     trtodo.ok(&["category", "delete", "Work"]);
     let out = trtodo.ok(&["category", "add", "Errands"]);
     assert!(out.contains("added with ID 1"), "{out}");

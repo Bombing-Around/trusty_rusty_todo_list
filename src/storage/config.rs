@@ -17,14 +17,12 @@ impl ConfigStorage {
 
 impl Storage for ConfigStorage {
     fn save(&self, data: &crate::models::StorageData) -> Result<(), StorageError> {
-        // Convert StorageData to Config
-        let config = Config {
-            deleted_task_lifespan: data.config.deleted_task_lifespan,
-            storage_type: data.config.storage_type.clone(),
-            storage_path: data.config.storage_path.clone(),
-            default_category: data.config.default_category.clone(),
-            default_priority: data.config.default_priority.clone(),
-        };
+        // The config file holds only the config half of `StorageData` (tasks
+        // and categories live in the separate data file). Cloning the whole
+        // `Config` rather than rebuilding it field by field means a newly
+        // added field - like the `default_categories_offered` first-run
+        // marker - can't be silently dropped on save.
+        let config = data.config.clone();
 
         // Create parent directories if they don't exist
         if let Some(parent) = self.path.parent() {
@@ -107,6 +105,7 @@ mod tests {
                 storage_path: Some("~/.config/trtodo".to_string()),
                 default_category: Some("work".to_string()),
                 default_priority: Some("medium".to_string()),
+                default_categories_offered: Some(true),
             },
             current_category: None,
             last_sync: chrono::Utc::now(),
@@ -131,6 +130,8 @@ mod tests {
             loaded_data.config.default_priority,
             Some("medium".to_string())
         );
+        // The first-run marker round-trips like any other field.
+        assert_eq!(loaded_data.config.default_categories_offered, Some(true));
     }
 
     // Values unchanged from before this fix (a missing file already produced
@@ -161,9 +162,12 @@ mod tests {
         assert_eq!(loaded_data.config.storage_path, None);
         assert_eq!(loaded_data.config.default_category, None);
         assert_eq!(loaded_data.config.default_priority, None);
+        // No first-run marker either way, which is what makes both of these
+        // count as a first run.
+        assert_eq!(loaded_data.config.default_categories_offered, None);
     }
 
-    /// Regression test for issue #22's second half: writing a config with
+    /// Regression test: writing a config with
     /// only one field set must not materialize explicit JSON `null`s for the
     /// rest, or the next `load()` would see those keys as *present* and
     /// never fall back to a default for them.

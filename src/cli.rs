@@ -22,6 +22,27 @@ pub struct Cli {
     )]
     pub config: Option<PathBuf>,
 
+    // These two are the non-interactive escape hatch for scripts and CI:
+    // they let an invocation answer the first-run offer of the
+    // default categories without a terminal, so automation is never blocked
+    // waiting on input. Questions with no yes/no answer - picking between
+    // several tasks that share a name - are still refused under both flags
+    // rather than guessed at; see `prompter::NonInteractivePrompter`.
+    /// Assume "yes" for confirmation prompts and never read from stdin
+    ///
+    /// Accepts the first-run offer to create the default categories without
+    /// asking. Questions that aren't yes/no (such as which of several
+    /// same-named tasks you meant) are still refused rather than guessed at.
+    #[arg(long = "yes", short = 'y', global = true, conflicts_with = "no_input")]
+    pub yes: bool,
+
+    /// Never prompt; decline confirmations and never read from stdin
+    ///
+    /// The counterpart to --yes. Declining the first-run offer is a real
+    /// answer, so it is remembered and never asked again.
+    #[arg(long = "no-input", global = true)]
+    pub no_input: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -32,9 +53,10 @@ pub enum Commands {
     Add {
         /// Title of the task
         title: String,
-        /// Category name or ID
+        /// Category name or ID. Omit to use the current category context, then
+        /// the `default-category` config value, then Uncategorized.
         #[arg(short = 'c', long = "category")]
-        category: String,
+        category: Option<String>,
         /// Priority level
         #[arg(short = 'p', long = "priority")]
         priority: Option<Priority>,
@@ -188,15 +210,38 @@ pub enum CategoryCommands {
     List,
 }
 
-/// README: `trtodo deleted flush` - "Remove all deleted items". `deleted
-/// list` (to preview what a flush would destroy) and restoring a
-/// soft-deleted task are deliberately not here: neither is documented in the
-/// README or part of issue #6's scope, and `Task::restore` stays unwired for
-/// the same reason.
+/// The `deleted` namespace: everything you can do with the tasks that
+/// `trtodo delete` soft-deleted (the `deleted_at` timestamp).
+///
+/// `list` and `restore` were previously absent on the grounds that the
+/// README documented only `flush`; the README now documents all three.
+/// They are not optional extras:
+/// soft-deleted tasks are hidden from `list` and `search`, so without
+/// `deleted list` they are invisible right up until `flush` destroys them,
+/// and without `deleted restore` a soft delete is just a slower hard delete.
 #[derive(Subcommand)]
 pub enum DeletedCommands {
+    /// List all soft-deleted tasks, showing what a flush would destroy
+    List,
+    /// Restore a soft-deleted task to its original category
+    Restore {
+        /// Title or ID of the soft-deleted task
+        ///
+        /// Resolved among soft-deleted tasks only, so this can never
+        /// accidentally match a live task. There is no `--category`: run
+        /// `deleted list` to see the IDs.
+        title_or_id: String,
+    },
     /// Permanently remove all soft-deleted tasks
-    Flush,
+    Flush {
+        /// Skip the confirmation prompt
+        ///
+        /// Required when running non-interactively (piped stdin, CI,
+        /// scripts): with no terminal to confirm at, `flush` refuses rather
+        /// than destroying data unattended.
+        #[arg(short = 'y', long = "yes", visible_alias = "force")]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -242,6 +287,29 @@ mod tests {
         assert_eq!(cli.config, None);
     }
 
+    /// The non-interactive flags for the first-run offer. Both are
+    /// global (usable before or after the subcommand) and mutually
+    /// exclusive - "assume yes" and "assume no" cannot both hold.
+    #[test]
+    fn test_non_interactive_flags() {
+        let cli = parse_args(&["trtodo", "--yes", "list"]);
+        assert!(cli.yes);
+        assert!(!cli.no_input);
+
+        let cli = parse_args(&["trtodo", "list", "-y"]);
+        assert!(cli.yes);
+
+        let cli = parse_args(&["trtodo", "list", "--no-input"]);
+        assert!(cli.no_input);
+        assert!(!cli.yes);
+
+        let cli = parse_args(&["trtodo", "list"]);
+        assert!(!cli.yes);
+        assert!(!cli.no_input);
+
+        assert!(try_parse_args(&["trtodo", "--yes", "--no-input", "list"]).is_err());
+    }
+
     #[test]
     fn test_add_task() {
         let cli = parse_args(&["trtodo", "add", "Buy milk", "--category", "Home"]);
@@ -252,7 +320,23 @@ mod tests {
                 priority,
             } => {
                 assert_eq!(title, "Buy milk");
-                assert_eq!(category, "Home");
+                assert_eq!(category, Some("Home".to_string()));
+                assert!(priority.is_none());
+            }
+            _ => panic!("Expected Add command"),
+        }
+
+        // `--category` is optional: omitting it parses cleanly and
+        // leaves resolution to `main::resolve_add_category`.
+        let cli = parse_args(&["trtodo", "add", "Buy milk"]);
+        match cli.command {
+            Commands::Add {
+                title,
+                category,
+                priority,
+            } => {
+                assert_eq!(title, "Buy milk");
+                assert!(category.is_none());
                 assert!(priority.is_none());
             }
             _ => panic!("Expected Add command"),
@@ -275,7 +359,7 @@ mod tests {
                 priority,
             } => {
                 assert_eq!(title, "Buy milk");
-                assert_eq!(category, "Home");
+                assert_eq!(category, Some("Home".to_string()));
                 assert_eq!(priority, Some(Priority::High));
             }
             _ => panic!("Expected Add command"),
@@ -375,20 +459,71 @@ mod tests {
 
     #[test]
     fn test_deleted_commands() {
-        // Test deleted flush
+        // Test deleted list
+        let cli = parse_args(&["trtodo", "deleted", "list"]);
+        match cli.command {
+            Commands::Deleted { command } => match command {
+                DeletedCommands::List => {}
+                _ => panic!("Expected Deleted List command"),
+            },
+            _ => panic!("Expected Deleted command"),
+        }
+
+        // Test deleted restore
+        let cli = parse_args(&["trtodo", "deleted", "restore", "Buy milk"]);
+        match cli.command {
+            Commands::Deleted { command } => match command {
+                DeletedCommands::Restore { title_or_id } => {
+                    assert_eq!(title_or_id, "Buy milk");
+                }
+                _ => panic!("Expected Deleted Restore command"),
+            },
+            _ => panic!("Expected Deleted command"),
+        }
+
+        // Test deleted flush: confirmation is opt-out, so `yes` is false
+        // unless the escape hatch was passed.
         let cli = parse_args(&["trtodo", "deleted", "flush"]);
         match cli.command {
             Commands::Deleted { command } => match command {
-                DeletedCommands::Flush => {}
+                DeletedCommands::Flush { yes } => assert!(!yes),
+                _ => panic!("Expected Deleted Flush command"),
             },
             _ => panic!("Expected Deleted command"),
+        }
+
+        // ... in any of its three spellings.
+        for flag in ["--yes", "-y", "--force"] {
+            let cli = parse_args(&["trtodo", "deleted", "flush", flag]);
+            match cli.command {
+                Commands::Deleted { command } => match command {
+                    DeletedCommands::Flush { yes } => assert!(yes, "{flag} should confirm"),
+                    _ => panic!("Expected Deleted Flush command"),
+                },
+                _ => panic!("Expected Deleted command"),
+            }
         }
     }
 
     #[test]
+    fn test_deleted_restore_requires_a_task_reference() {
+        // Nothing sensible to restore without one, and defaulting to "all"
+        // would be a surprising thing to do by accident.
+        assert!(try_parse_args(&["trtodo", "deleted", "restore"]).is_err());
+    }
+
+    #[test]
     fn test_required_arguments() {
-        // Test that category is required for add command
+        // `add` used to require `--category`; it is now optional so the
+        // `category use` context and the `default-category` config value
+        // can supply it. Parsing must therefore *succeed* without it - the
+        // decision of where the task lands moved to `main`, which has the
+        // storage and config access needed to make it.
         let result = try_parse_args(&["trtodo", "add", "Buy milk"]);
+        assert!(result.is_ok());
+
+        // A title is still required, though: nothing can supply that.
+        let result = try_parse_args(&["trtodo", "add"]);
         assert!(result.is_err());
 
         // Test that priority must be valid

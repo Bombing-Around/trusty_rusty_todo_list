@@ -1,21 +1,35 @@
 use super::Storage;
 use super::StorageError;
+use crate::category_manager::UNCATEGORIZED_ID;
 use crate::models::{Category, Priority, StorageData, Task};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+/// The schema this build knows how to read and write.
+///
+/// Version history, so the number means something concrete:
+///   - `1`: the original tables, with no `deleted_at` column on `tasks`.
+///   - `2`: `tasks.deleted_at` added for soft deletion.
+///
+/// Bump this *and* teach `initialize_schema` how to get a database from the
+/// previous version to the new one whenever the on-disk shape changes.
 #[allow(dead_code)]
 const SCHEMA_VERSION: i32 = 2;
 
+/// Created and read before anything else, so `initialize_schema` can find out
+/// what it is dealing with *before* it starts mutating tables. Deliberately
+/// separate from `INIT_SCHEMA` below for that ordering alone.
 #[allow(dead_code)]
-const INIT_SCHEMA: &str = r#"
--- Create schema version table first
+const INIT_VERSION_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
 );
+"#;
 
+#[allow(dead_code)]
+const INIT_SCHEMA: &str = r#"
 -- Create categories table
 CREATE TABLE IF NOT EXISTS categories (
     id INTEGER PRIMARY KEY,
@@ -69,6 +83,24 @@ impl SqliteStorage {
         Ok(storage)
     }
 
+    /// Brings the database at hand up to `SCHEMA_VERSION`, or refuses to touch
+    /// it if it cannot.
+    ///
+    /// What versioning here *is*: a guard rail plus one hand-written upgrade
+    /// step. `schema_version` is read back before any table is touched, an
+    /// unknown (newer) version is rejected outright with a message the user
+    /// can act on, and a version-1 database is upgraded in place by adding
+    /// the `deleted_at` column before the stored version is advanced.
+    ///
+    /// What it is *not*: a general migration system. There is no ordered
+    /// `MIGRATIONS` list, no down-migrations, and no way to go from version N
+    /// to N+2 other than by writing that step here by hand. `src/storage/
+    /// migrations.rs` used to gesture at one but never held a single
+    /// migration, and was deleted. Rather than resurrect it - or drop
+    /// `schema_version` and lose the record of the v1 -> v2 change - the
+    /// table was simply given the reader it never had.
+    /// Designing the real thing is deferred until the schema settles - do not
+    /// mistake the code below for it.
     fn initialize_schema(&self) -> Result<(), StorageError> {
         let conn = self
             .conn
@@ -79,14 +111,50 @@ impl SqliteStorage {
         conn.execute("PRAGMA foreign_keys = ON", [])
             .map_err(|e| StorageError::Storage(format!("Failed to enable foreign keys: {}", e)))?;
 
-        // First create the tables. `CREATE TABLE IF NOT EXISTS` is a no-op
+        // Read the stored version *first*, before any table is created or
+        // altered: if this database came from a build we don't understand, we
+        // want to have changed nothing by the time we bail out.
+        conn.execute_batch(INIT_VERSION_TABLE).map_err(|e| {
+            StorageError::Storage(format!("Failed to initialize schema version table: {}", e))
+        })?;
+
+        // `MAX(version)` rather than a bare `SELECT version`: it collapses an
+        // empty table (a brand-new database, or one seeded by some earlier
+        // build that never inserted a row) into a clean `None` instead of a
+        // `QueryReturnedNoRows` error, and it is robust to a stray duplicate
+        // row.
+        let stored_version: Option<i32> = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| StorageError::Storage(format!("Failed to read schema version: {}", e)))?;
+
+        // A version from the future is the one case we cannot handle: the
+        // tables may hold columns, constraints, or encodings this build has
+        // never heard of, and blundering on would either error somewhere far
+        // less comprehensible or quietly write data back in the older shape.
+        // Fail here, while the database is still untouched, and say exactly
+        // what happened.
+        if let Some(version) = stored_version {
+            if version > SCHEMA_VERSION {
+                return Err(StorageError::Storage(format!(
+                    "this database uses schema version {}, but this build of trtodo only \
+                     understands up to version {}; it was most likely written by a newer \
+                     version of trtodo. Upgrade trtodo, or point storage.path at a different \
+                     directory. The database has not been modified.",
+                    version, SCHEMA_VERSION
+                )));
+            }
+        }
+
+        // Now create the tables. `CREATE TABLE IF NOT EXISTS` is a no-op
         // against a database that already has a `tasks` table from before
         // `deleted_at` existed, so it will NOT retroactively add the column -
         // that is handled explicitly below.
         conn.execute_batch(INIT_SCHEMA)
             .map_err(|e| StorageError::Storage(format!("Failed to initialize schema: {}", e)))?;
 
-        // Migrate pre-existing `tasks` tables (schema version 1, issue #29)
+        // Migrate pre-existing `tasks` tables (schema version 1)
         // that predate the `deleted_at` column. `PRAGMA table_info` lets us
         // check for the column's presence directly instead of trying the
         // `ALTER TABLE` and swallowing a "duplicate column" error, so this
@@ -105,32 +173,31 @@ impl SqliteStorage {
                 })?;
         }
 
-        // Check if schema_version table exists and has a version
-        let version_exists: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version IS NOT NULL)",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|e| StorageError::Storage(format!("Failed to check schema version: {}", e)))?;
-
-        if !version_exists {
-            // Set initial schema version
-            conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?1)",
-                params![SCHEMA_VERSION],
-            )
-            .map_err(|e| StorageError::Storage(format!("Failed to set schema version: {}", e)))?;
-        } else {
-            // Bring an older database's stored version up to date now that
-            // the migration above has run.
-            conn.execute(
-                "UPDATE schema_version SET version = ?1 WHERE version < ?1",
-                params![SCHEMA_VERSION],
-            )
-            .map_err(|e| {
-                StorageError::Storage(format!("Failed to update schema version: {}", e))
-            })?;
+        // Record where we ended up. Written last, after the upgrade above has
+        // actually succeeded, so a database that failed part way through is
+        // never left claiming a version it doesn't have.
+        match stored_version {
+            None => {
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?1)",
+                    params![SCHEMA_VERSION],
+                )
+                .map_err(|e| {
+                    StorageError::Storage(format!("Failed to set schema version: {}", e))
+                })?;
+            }
+            Some(version) if version < SCHEMA_VERSION => {
+                conn.execute(
+                    "UPDATE schema_version SET version = ?1 WHERE version < ?1",
+                    params![SCHEMA_VERSION],
+                )
+                .map_err(|e| {
+                    StorageError::Storage(format!("Failed to update schema version: {}", e))
+                })?;
+            }
+            // Already current. The `>` case was rejected above, so this arm
+            // is exactly `version == SCHEMA_VERSION`: leave the row alone.
+            Some(_) => {}
         }
 
         Ok(())
@@ -184,6 +251,43 @@ impl Storage for SqliteStorage {
                 StorageError::Storage(format!("Failed to save current category: {}", e))
             })?;
         }
+
+        // Seed the Uncategorized sentinel row before any task is inserted.
+        //
+        // `Uncategorized` (ID 0) is synthesized by `CategoryManager` rather
+        // than stored - it cannot be created, renamed, or deleted, so it has
+        // no business being in `data.categories`, and it never is. But the
+        // `tasks.category_id` foreign key does not know that: a task filed
+        // under Uncategorized references a row that, without this, does not
+        // exist, and SQLite rejects the insert with "FOREIGN KEY constraint
+        // failed". JSON has no such constraint, so the same data saved fine
+        // there and only SQLite users hit it.
+        //
+        // That made every uncategorized task unstorable under SQLite - which
+        // is now the *default* landing place for `add` with no `--category`
+        // and a routine thing to carry across a backend switch. Rather than
+        // drop the foreign key, which is genuinely
+        // worth having for real categories, we give it the one row it is
+        // missing. `load` filters this row back out (see there), so the
+        // sentinel is an implementation detail of this backend and is never
+        // visible to callers.
+        tx.execute(
+            "INSERT INTO categories (id, name, description, \"order\", created_at) \
+             VALUES (?1, ?2, NULL, ?3, ?4)",
+            // The name is immaterial - `load` filters this row out and
+            // callers synthesize their own - but it is spelled the same way
+            // so anyone opening the database with `sqlite3` sees something
+            // recognizable rather than a mystery row.
+            params![
+                UNCATEGORIZED_ID,
+                "Uncategorized",
+                0i64,
+                Utc::now().to_rfc3339()
+            ],
+        )
+        .map_err(|e| {
+            StorageError::Storage(format!("Failed to seed the Uncategorized category: {}", e))
+        })?;
 
         // Insert categories
         for category in &data.categories {
@@ -264,11 +368,22 @@ impl Storage for SqliteStorage {
             .map_err(|e| StorageError::Storage(format!("Failed to query categories: {}", e)))?;
 
         for category in category_iter {
-            categories.push(
-                category.map_err(|e| {
-                    StorageError::Storage(format!("Failed to read category: {}", e))
-                })?,
-            );
+            let category = category
+                .map_err(|e| StorageError::Storage(format!("Failed to read category: {}", e)))?;
+
+            // Hide the Uncategorized sentinel `save` seeds to satisfy the
+            // `tasks.category_id` foreign key. Callers synthesize their own
+            // Uncategorized and treat a *stored* one as data corruption, so
+            // letting it escape here would be visible in two ways that both
+            // matter: `first_run` decides a store is untouched by asking
+            // whether `get_all_categories` is empty, and it would
+            // otherwise be copied into the other backend by a `storage.type`
+            // switch. Filtering here keeps the sentinel local to
+            // this backend, so both stay correct and JSON and SQLite continue
+            // to load as exactly the same data.
+            if category.id != UNCATEGORIZED_ID {
+                categories.push(category);
+            }
         }
 
         // Load tasks
@@ -514,7 +629,7 @@ mod tests {
     }
 
     /// `deleted_at` must survive a save/load cycle in the SQLite backend,
-    /// same as every other task field (issue #29).
+    /// same as every other task field.
     #[test]
     fn test_deleted_at_round_trip() {
         let dir = TempDir::new().unwrap();
@@ -540,10 +655,61 @@ mod tests {
         assert!(storage.load().unwrap().tasks[0].deleted_at.is_none());
     }
 
+    /// A task filed under the synthesized "Uncategorized" category (ID 0)
+    /// must save and load like any other, and must not drag the sentinel row
+    /// `save` seeds to satisfy the `tasks.category_id` foreign key back out
+    /// with it.
+    ///
+    /// This is a regression test for a real defect: because "Uncategorized"
+    /// is synthesized rather than stored, nothing satisfied that foreign key
+    /// and SQLite rejected every such insert with "FOREIGN KEY constraint
+    /// failed", while JSON - which has no constraint - accepted the identical
+    /// data. It stayed latent while `add` required `--category`; it became
+    /// the default path once `--category` was made optional with
+    /// Uncategorized as the fallback, and a routine one for
+    /// anyone carrying an uncategorized task across a `storage.type` switch.
+    ///
+    /// The second half is what keeps the sentinel from leaking: first-run
+    /// detection asks whether `get_all_categories` is empty, so a
+    /// visible sentinel would make a fresh SQLite store look established and
+    /// silently suppress the setup offer.
+    #[test]
+    fn test_uncategorized_tasks_round_trip_without_leaking_the_sentinel() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("uncategorized.db");
+        let storage = SqliteStorage::new(&db_path).unwrap();
+
+        let mut data = create_test_data();
+        data.tasks[0].category_id = UNCATEGORIZED_ID;
+        storage.save(&data).unwrap();
+
+        let loaded = storage.load().unwrap();
+        let task = loaded.tasks.iter().find(|t| t.id == 1).unwrap();
+        assert_eq!(task.category_id, UNCATEGORIZED_ID);
+
+        // The sentinel is an implementation detail and must stay invisible.
+        assert!(
+            !loaded.categories.iter().any(|c| c.id == UNCATEGORIZED_ID),
+            "the Uncategorized sentinel leaked out of the SQLite backend"
+        );
+        assert_eq!(loaded.categories.len(), data.categories.len());
+
+        // A store holding only uncategorized tasks still reports no
+        // categories, so first-run detection stays correct.
+        let mut empty = create_test_data();
+        empty.categories.clear();
+        empty.tasks.iter_mut().for_each(|t| {
+            t.category_id = UNCATEGORIZED_ID;
+        });
+        empty.current_category = None;
+        storage.save(&empty).unwrap();
+        assert!(storage.load().unwrap().categories.is_empty());
+    }
+
     /// A database created before `deleted_at` existed (schema version 1) has
     /// a `tasks` table with no such column. Opening it must migrate the
     /// column in place rather than erroring - this is what
-    /// `initialize_schema`'s `PRAGMA table_info` check guards (issue #29).
+    /// `initialize_schema`'s `PRAGMA table_info` check guards.
     #[test]
     fn test_migrates_pre_existing_database_without_deleted_at_column() {
         let dir = TempDir::new().unwrap();
@@ -622,6 +788,89 @@ mod tests {
             .query_row("SELECT version FROM schema_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    /// `schema_version` used to be written once at database creation and
+    /// never read, so the number it held was decorative. It now has a
+    /// reader. On a brand-new database the seeded value must be the
+    /// version this build actually writes, and re-opening must leave exactly
+    /// one row saying so - a second row (or a bumped value) would mean the
+    /// bookkeeping drifts every time the app starts.
+    #[test]
+    fn test_schema_version_is_seeded_once_and_stays_put() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("versioned.db");
+
+        let read_versions = |storage: &SqliteStorage| -> Vec<i32> {
+            let conn = storage.conn.lock().unwrap();
+            let mut stmt = conn.prepare("SELECT version FROM schema_version").unwrap();
+            let rows: Vec<i32> = stmt
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .map(|v| v.unwrap())
+                .collect();
+            rows
+        };
+
+        let storage = SqliteStorage::new(&db_path).unwrap();
+        assert_eq!(read_versions(&storage), vec![SCHEMA_VERSION]);
+        drop(storage);
+
+        let storage = SqliteStorage::new(&db_path).unwrap();
+        assert_eq!(read_versions(&storage), vec![SCHEMA_VERSION]);
+    }
+
+    /// The reader's whole reason for existing: a database written
+    /// by a *newer* build carries a version this code has never heard of. Its
+    /// tables may hold columns or constraints we don't know about, so opening
+    /// it must fail with a message the user can act on rather than half-work
+    /// and write data back in an older shape.
+    #[test]
+    fn test_rejects_a_database_from_a_newer_build() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("from_the_future.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("CREATE TABLE schema_version (version INTEGER NOT NULL);")
+                .unwrap();
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                params![SCHEMA_VERSION + 1],
+            )
+            .unwrap();
+        }
+
+        let message = match SqliteStorage::new(&db_path) {
+            Err(e) => e.to_string(),
+            Ok(_) => {
+                panic!("a database from a newer build must be rejected, not opened and written to")
+            }
+        };
+        assert!(
+            message.contains(&(SCHEMA_VERSION + 1).to_string())
+                && message.contains(&SCHEMA_VERSION.to_string()),
+            "the error should name both the version found and the version supported, got: {message}"
+        );
+        assert!(
+            message.contains("newer version of trtodo"),
+            "the error should explain *why* this happened, got: {message}"
+        );
+
+        // And it must have bailed out before touching anything: no tables were
+        // created behind the user's back.
+        let conn = Connection::open(&db_path).unwrap();
+        let table_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('tasks', 'categories', 'current_category')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            table_count, 0,
+            "a rejected database must be left exactly as it was found"
+        );
     }
 
     #[test]

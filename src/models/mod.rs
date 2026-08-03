@@ -10,7 +10,7 @@ pub struct Task {
     pub description: Option<String>,
     // 0 is the magic "Uncategorized" category ID - see
     // `category_manager::UNCATEGORIZED_ID`. It does NOT mean deleted; deletion
-    // is tracked independently via `deleted_at` below (issue #29).
+    // is tracked independently via `deleted_at` below.
     pub category_id: u64,
     pub completed: bool,
     pub priority: Priority,
@@ -65,7 +65,7 @@ impl Task {
     /// Soft-deletes the task: it is hidden from listings/searches and becomes
     /// eligible for purging (see `Storage::purge_deleted_tasks`), but its
     /// `category_id` is left untouched. Keeping the real category is the
-    /// whole point of this design (issue #29) - it's what makes `restore`
+    /// whole point of this design - it's what makes `restore`
     /// trivial and stops category deletion from ever masquerading as task
     /// deletion.
     pub fn soft_delete(&mut self) {
@@ -73,9 +73,34 @@ impl Task {
         self.updated_at = Utc::now();
     }
 
+    /// Un-deletes the task. Because `soft_delete` never touched
+    /// `category_id`, this is all a restore takes - the task goes straight
+    /// back where it came from. Reachable from the CLI as
+    /// `trtodo deleted restore <title or id>`.
     pub fn restore(&mut self) {
         self.deleted_at = None;
         self.updated_at = Utc::now();
+    }
+
+    /// The deletion timestamp rendered for humans: the "deleted" column of
+    /// `trtodo deleted list`, the flush preview, and the restore
+    /// disambiguation prompt all share this one format so the same task
+    /// looks the same wherever it is shown.
+    ///
+    /// Timestamps are stored in UTC (`Utc::now`), and this deliberately
+    /// prints them as such rather than converting to local time: nothing
+    /// else in the CLI displays a timestamp yet, so there is no local-time
+    /// convention to match, and labelling the zone is better than quietly
+    /// implying one.
+    ///
+    /// A live task has no deletion timestamp; every caller of this today
+    /// works from `Storage::get_deleted_tasks`, so the `None` arm exists
+    /// only so this can never panic on a task that slipped through.
+    pub fn deleted_at_display(&self) -> String {
+        match self.deleted_at {
+            Some(deleted_at) => deleted_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+            None => "not deleted".to_string(),
+        }
     }
 
     pub fn mark_completed(&mut self) {
