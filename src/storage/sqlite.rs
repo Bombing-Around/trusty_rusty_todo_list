@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 ///
 /// Version history, so the number means something concrete:
 ///   - `1`: the original tables, with no `deleted_at` column on `tasks`.
-///   - `2`: `tasks.deleted_at` added for soft deletion (issue #29).
+///   - `2`: `tasks.deleted_at` added for soft deletion.
 ///
 /// Bump this *and* teach `initialize_schema` how to get a database from the
 /// previous version to the new one whenever the on-disk shape changes.
@@ -95,10 +95,10 @@ impl SqliteStorage {
     /// What it is *not*: a general migration system. There is no ordered
     /// `MIGRATIONS` list, no down-migrations, and no way to go from version N
     /// to N+2 other than by writing that step here by hand. `src/storage/
-    /// migrations.rs` used to gesture at one but never had a single migration
-    /// in it and was deleted in issue #23; issue #25 decided that rather than
-    /// resurrect it (or delete `schema_version` and lose the record of the
-    /// v1 -> v2 change), the table should simply get the reader it never had.
+    /// migrations.rs` used to gesture at one but never held a single
+    /// migration, and was deleted. Rather than resurrect it - or drop
+    /// `schema_version` and lose the record of the v1 -> v2 change - the
+    /// table was simply given the reader it never had.
     /// Designing the real thing is deferred until the schema settles - do not
     /// mistake the code below for it.
     fn initialize_schema(&self) -> Result<(), StorageError> {
@@ -154,7 +154,7 @@ impl SqliteStorage {
         conn.execute_batch(INIT_SCHEMA)
             .map_err(|e| StorageError::Storage(format!("Failed to initialize schema: {}", e)))?;
 
-        // Migrate pre-existing `tasks` tables (schema version 1, issue #29)
+        // Migrate pre-existing `tasks` tables (schema version 1)
         // that predate the `deleted_at` column. `PRAGMA table_info` lets us
         // check for the column's presence directly instead of trying the
         // `ALTER TABLE` and swallowing a "duplicate column" error, so this
@@ -265,8 +265,8 @@ impl Storage for SqliteStorage {
         //
         // That made every uncategorized task unstorable under SQLite - which
         // is now the *default* landing place for `add` with no `--category`
-        // (issue #33) and a routine thing to carry across a backend switch
-        // (issue #17). Rather than drop the foreign key, which is genuinely
+        // and a routine thing to carry across a backend switch. Rather than
+        // drop the foreign key, which is genuinely
         // worth having for real categories, we give it the one row it is
         // missing. `load` filters this row back out (see there), so the
         // sentinel is an implementation detail of this backend and is never
@@ -376,9 +376,9 @@ impl Storage for SqliteStorage {
             // Uncategorized and treat a *stored* one as data corruption, so
             // letting it escape here would be visible in two ways that both
             // matter: `first_run` decides a store is untouched by asking
-            // whether `get_all_categories` is empty (issue #27), and it would
+            // whether `get_all_categories` is empty, and it would
             // otherwise be copied into the other backend by a `storage.type`
-            // switch (issue #17). Filtering here keeps the sentinel local to
+            // switch. Filtering here keeps the sentinel local to
             // this backend, so both stay correct and JSON and SQLite continue
             // to load as exactly the same data.
             if category.id != UNCATEGORIZED_ID {
@@ -629,7 +629,7 @@ mod tests {
     }
 
     /// `deleted_at` must survive a save/load cycle in the SQLite backend,
-    /// same as every other task field (issue #29).
+    /// same as every other task field.
     #[test]
     fn test_deleted_at_round_trip() {
         let dir = TempDir::new().unwrap();
@@ -666,12 +666,11 @@ mod tests {
     /// failed", while JSON - which has no constraint - accepted the identical
     /// data. It stayed latent while `add` required `--category`; it became
     /// the default path once `--category` was made optional with
-    /// Uncategorized as the fallback (issue #33), and a routine one for
-    /// anyone carrying an uncategorized task across a `storage.type` switch
-    /// (issue #17).
+    /// Uncategorized as the fallback, and a routine one for
+    /// anyone carrying an uncategorized task across a `storage.type` switch.
     ///
     /// The second half is what keeps the sentinel from leaking: first-run
-    /// detection asks whether `get_all_categories` is empty (issue #27), so a
+    /// detection asks whether `get_all_categories` is empty, so a
     /// visible sentinel would make a fresh SQLite store look established and
     /// silently suppress the setup offer.
     #[test]
@@ -710,7 +709,7 @@ mod tests {
     /// A database created before `deleted_at` existed (schema version 1) has
     /// a `tasks` table with no such column. Opening it must migrate the
     /// column in place rather than erroring - this is what
-    /// `initialize_schema`'s `PRAGMA table_info` check guards (issue #29).
+    /// `initialize_schema`'s `PRAGMA table_info` check guards.
     #[test]
     fn test_migrates_pre_existing_database_without_deleted_at_column() {
         let dir = TempDir::new().unwrap();
@@ -791,9 +790,9 @@ mod tests {
         assert_eq!(version, SCHEMA_VERSION);
     }
 
-    /// Issue #25: `schema_version` used to be written once at database
-    /// creation and never read, so the number it held was decorative. It now
-    /// has a reader. On a brand-new database the seeded value must be the
+    /// `schema_version` used to be written once at database creation and
+    /// never read, so the number it held was decorative. It now has a
+    /// reader. On a brand-new database the seeded value must be the
     /// version this build actually writes, and re-opening must leave exactly
     /// one row saying so - a second row (or a bumped value) would mean the
     /// bookkeeping drifts every time the app starts.
@@ -821,7 +820,7 @@ mod tests {
         assert_eq!(read_versions(&storage), vec![SCHEMA_VERSION]);
     }
 
-    /// The reader's whole reason for existing (issue #25): a database written
+    /// The reader's whole reason for existing: a database written
     /// by a *newer* build carries a version this code has never heard of. Its
     /// tables may hold columns or constraints we don't know about, so opening
     /// it must fail with a message the user can act on rather than half-work

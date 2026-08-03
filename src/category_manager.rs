@@ -478,8 +478,8 @@ mod tests {
         assert_eq!(categories.len(), 2); // Uncategorized + Test
     }
 
-    /// Issue #16 / README: "when deleting a category it is removed and its ID
-    /// is made available again."
+    /// README: "when deleting a category it is removed and its ID is made
+    /// available again."
     #[test]
     fn test_deleted_category_id_is_reused() {
         let test_storage = TestStorage::new();

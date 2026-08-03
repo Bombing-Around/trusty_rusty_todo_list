@@ -64,7 +64,7 @@ pub enum CliError {
     )]
     InvalidMoveArguments,
     /// `deleted flush` is the only irreversible command in the CLI, so it
-    /// asks first (issue #32). When there is no terminal to ask at -
+    /// asks first. When there is no terminal to ask at -
     /// `StdinPrompter` detects that and returns `PromptError::NotInteractive`
     /// rather than blocking - the choice is between destroying the data
     /// unattended and refusing. It refuses: a script that meant to flush can
@@ -129,7 +129,7 @@ fn run() -> Result<(), CliError> {
                     .ok_or_else(|| CliError::MalformedKeyValue(key_value.clone()))?;
                 // Deliberately *before* the config is written: if carrying the
                 // user's data across fails, the setting stays where it was and
-                // they are still looking at their tasks (issue #17).
+                // they are still looking at their tasks.
                 if key == "storage.type" {
                     carry_data_across_backend_switch(&config_manager, value)?;
                 }
@@ -186,7 +186,7 @@ fn build_prompter(cli: &Cli) -> Box<dyn Prompter> {
 const DEFAULT_CATEGORIES: [&str; 2] = ["Home", "Work"];
 
 /// Opens task storage for a command that needs it, making the first-run
-/// offer (issue #27) on the way.
+/// offer on the way.
 ///
 /// This is the *only* path to task storage from `run`, which is what decides
 /// the answer to "which commands trigger the offer?": every command that
@@ -217,8 +217,7 @@ fn open_task_storage(
 }
 
 /// Offers to create the README's default "Home" and "Work" categories the
-/// first time `trtodo` touches task storage (issue #27, closing out issue
-/// #4).
+/// first time `trtodo` touches task storage.
 ///
 /// "First run" is a *config* fact, not a storage fact: the marker written by
 /// `ConfigManager::record_default_categories_offer` records that the offer
@@ -282,7 +281,7 @@ fn offer_default_categories(
 /// chosen backend.
 ///
 /// Also sweeps up anything overdue for automatic purging under
-/// `deleted-task-lifespan` (issue #6) before handing the storage back. This
+/// `deleted-task-lifespan` before handing the storage back. This
 /// is the one place every command that touches task storage passes through -
 /// `Commands::Config` never calls `open_storage` at all, since it has no
 /// need to touch task storage, so the sweep correctly never runs for it (and
@@ -347,7 +346,7 @@ fn open_storage_of_type(
 }
 
 /// Carries the user's tasks and categories over when `storage.type` changes,
-/// and reports honestly when it can't (issue #17).
+/// and reports honestly when it can't.
 ///
 /// Each backend keeps its own data file, so before this existed a switch made
 /// every category and task disappear from view with nothing but "Warning:
@@ -463,7 +462,7 @@ fn carry_data_across_backend_switch(
 }
 
 /// Runs the automatic, `deleted-task-lifespan`-gated purge (README: "purged
-/// automatically after `deleted-task-lifespan` days"; issue #6) once per
+/// automatically after `deleted-task-lifespan` days") once per
 /// invocation, from within `open_storage`. See that function's doc comment
 /// for why it lives there rather than being duplicated across `run`'s
 /// branches.
@@ -560,7 +559,7 @@ fn run_category_command(storage: &dyn Storage, command: CategoryCommands) -> Res
 /// Dispatches `trtodo deleted ...`. Mirrors `run_category_command`'s shape.
 ///
 /// Unlike that function this also needs a `CategoryManager`: soft-deleted
-/// tasks keep their real `category_id` (issue #29), and both `list` and
+/// tasks keep their real `category_id`, and both `list` and
 /// `restore` are only useful if that is reported as a *name* the user
 /// recognizes rather than a bare number.
 fn run_deleted_command(storage: &dyn Storage, command: DeletedCommands) -> Result<(), CliError> {
@@ -620,9 +619,8 @@ fn run_deleted_command(storage: &dyn Storage, command: DeletedCommands) -> Resul
 
             // Printed before the flush in both paths, so it serves as the
             // confirmation preview *and* as the record of what was destroyed
-            // (issue #32 asked for both; one listing satisfies both, and
-            // printing it afterwards instead would mean the interactive user
-            // confirms blind).
+            // - one listing satisfies both, and printing it afterwards
+            // instead would mean the interactive user confirms blind.
             println!(
                 "The following {} task(s) will be permanently removed:",
                 pending.len()
@@ -652,7 +650,7 @@ fn run_deleted_command(storage: &dyn Storage, command: DeletedCommands) -> Resul
 }
 
 /// One row of `deleted list`: ID, title, the task's *real* category name,
-/// and when it was deleted (issue #32's four columns).
+/// and when it was deleted.
 ///
 /// Shared with `flush`'s preview so the two commands describe the same task
 /// in exactly the same words. Formatted after `run_task_command`'s `list`
@@ -702,10 +700,10 @@ fn to_model_priority(priority: cli::Priority) -> Priority {
     }
 }
 
-/// Resolves the effective `default-priority` config value (issue #22 made
-/// this reliably resolve to the documented default, `medium`, on a fresh
-/// install) to a domain `Priority`, for `add` invocations that omit
-/// `--priority`.
+/// Resolves the effective `default-priority` config value to a domain
+/// `Priority`, for `add` invocations that omit `--priority`. On a fresh
+/// install this resolves to the documented default, `medium`, rather than
+/// to nothing.
 fn resolve_default_priority(config_manager: &ConfigManager) -> Result<Priority, CliError> {
     let value = config_manager
         .get("default-priority")
@@ -713,7 +711,7 @@ fn resolve_default_priority(config_manager: &ConfigManager) -> Result<Priority, 
     Ok(Priority::from_str(&value)?)
 }
 
-/// Resolves the category a task created by `add` should land in (issue #33).
+/// Resolves the category a task created by `add` should land in.
 ///
 /// `add` is the odd one out among the task commands: `Delete`, `Update`,
 /// `Check`, and `Uncheck` can all degrade to an unscoped search (see
@@ -768,7 +766,7 @@ fn resolve_add_category(
 
     // 3. The configured `default-category`. It stores a *name* (or ID) rather
     //    than a resolved ID on purpose: category IDs are handed back out after
-    //    a delete (issue #16), so a stored ID could silently start pointing at
+    //    a delete, so a stored ID could silently start pointing at
     //    an unrelated category, whereas a stored name can only ever fail to
     //    resolve - a failure we can report. `ConfigManager::get` returns the
     //    effective value, and `default-category` has no documented default, so

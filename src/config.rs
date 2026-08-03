@@ -131,7 +131,7 @@ pub struct Config {
     pub default_category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_priority: Option<String>,
-    /// The first-run marker for issue #27: `Some(true)` records that the
+    /// The first-run marker: `Some(true)` records that the
     /// offer to create the default "Home"/"Work" categories has already been
     /// resolved (accepted, declined, or found unnecessary because categories
     /// already existed), so it is never made a second time.
@@ -157,9 +157,9 @@ impl Config {
     /// be populated with resolved defaults.
     ///
     /// Deliberately distinct from `Config::default()`: collapsing "unset"
-    /// and "documented default" into one value is exactly the bug in issue
-    /// #22 (it makes `config list` unable to tell "you set this" from "this
-    /// is a fallback").
+    /// and "documented default" into one value is a bug that has bitten
+    /// this code before (it makes `config list` unable to tell "you set
+    /// this" from "this is a fallback").
     pub fn unset() -> Self {
         Self {
             deleted_task_lifespan: None,
@@ -172,7 +172,7 @@ impl Config {
     }
 
     /// Whether the first-run offer of the default "Home"/"Work" categories
-    /// has already been resolved and must not be made again (issue #27).
+    /// has already been resolved and must not be made again.
     ///
     /// Anything other than a stored `true` - the key absent (a genuinely
     /// fresh install), or an explicit `false` - means "not yet offered".
@@ -315,7 +315,7 @@ impl ConfigManager {
     }
 
     /// Whether the first-run offer of the default "Home"/"Work" categories
-    /// has already been resolved (issue #27).
+    /// has already been resolved.
     ///
     /// Reads the *stored* config, never the effective one: the point of the
     /// marker is to distinguish "nothing has ever been written here" from
@@ -362,8 +362,8 @@ impl ConfigManager {
             // `old_storage_type` field feeding `needs_migration()` /
             // `get_migration_info()` that nothing ever called. The warning
             // named a migration that did not exist, fired even when there was
-            // no data to migrate, and told the user nothing they could act on
-            // (issue #17). Moving the data is now a real, tested step
+            // no data to migrate, and told the user nothing they could act
+            // on. Moving the data is now a real, tested step
             // (`main::carry_data_across_backend_switch`), and it runs *before*
             // this method so a failure leaves the setting - and therefore the
             // user's view of their data - unchanged. Anything it needs to say
@@ -391,7 +391,7 @@ impl ConfigManager {
                 // could never make the value trustworthy at the point of use.
                 // `main::resolve_add_category` therefore resolves it - and
                 // reports it as an error - when `add` actually falls through
-                // to it (issue #33).
+                // to it.
                 config.default_category = Some(value.to_string());
             }
             "default-priority" => {
@@ -534,7 +534,7 @@ mod tests {
     }
 
     // Previously asserted `None` for every key on a fresh config file - that
-    // encoded the issue #22 bug (documented defaults were never applied).
+    // encoded the bug where documented defaults were never applied.
     // `ConfigManager::get` returns the *effective* value, so a fresh install
     // must report the README's documented defaults, not `None`.
     // `default-category` has no documented default, so `None` there is
@@ -552,8 +552,8 @@ mod tests {
 
     // Previously only asserted that every key reports as a default (still
     // true - nothing has been set), but not *what* the printed value is,
-    // which is exactly what issue #22 got wrong (the value was `null`
-    // instead of the documented default).
+    // which is exactly what the earlier implementation got wrong (the value
+    // was `null` instead of the documented default).
     #[test]
     fn test_config_manager_list() {
         let temp_file = NamedTempFile::new().unwrap();
@@ -570,7 +570,7 @@ mod tests {
         assert_eq!(value_of("default-priority"), "medium");
     }
 
-    /// Regression test for issue #22's second, easier-to-miss half: once
+    /// Regression test for the second, easier-to-miss half of that bug: once
     /// *any* key has been `set`, the config file exists and every other key
     /// must still report as a default on the next load - not as an explicit
     /// `null` that beats the `#[serde(default)]` helper. A bare `impl
@@ -609,7 +609,7 @@ mod tests {
 
     /// `Config::default()` (the documented, *effective* defaults) and
     /// `Config::unset()` (nothing stored yet) must never collapse into the
-    /// same value - doing so is exactly the bug in issue #22.
+    /// same value - doing so is exactly the bug described on `unset`.
     #[test]
     fn test_default_and_unset_are_distinct() {
         let defaults = Config::default();
@@ -626,7 +626,7 @@ mod tests {
         assert_eq!(unset.default_priority, None);
     }
 
-    /// Issue #27: a fresh config (nothing stored) must report the first-run
+    /// A fresh config (nothing stored) must report the first-run
     /// offer as *not* made, and recording it must survive into the next
     /// process invocation - that persistence is the whole mechanism that
     /// stops the offer being repeated.

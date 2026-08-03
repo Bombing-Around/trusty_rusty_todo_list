@@ -12,9 +12,9 @@ env:
 jobs:
   # Conventional Commits, enforced only on pull requests.
   #
-  # Deliberately NOT run on pushes to main: the history predating PR #34 does
-  # not follow the convention, and retroactively failing CI on it would be
-  # noise with nothing actionable behind it.
+  # Deliberately NOT run on pushes to main: the older history does not follow
+  # the convention, and retroactively failing CI on it would be noise with
+  # nothing actionable behind it.
   commitlint:
     name: Commit messages
     runs-on: ubuntu-latest

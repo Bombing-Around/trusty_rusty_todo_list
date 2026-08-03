@@ -10,7 +10,7 @@ pub struct Task {
     pub description: Option<String>,
     // 0 is the magic "Uncategorized" category ID - see
     // `category_manager::UNCATEGORIZED_ID`. It does NOT mean deleted; deletion
-    // is tracked independently via `deleted_at` below (issue #29).
+    // is tracked independently via `deleted_at` below.
     pub category_id: u64,
     pub completed: bool,
     pub priority: Priority,
@@ -65,7 +65,7 @@ impl Task {
     /// Soft-deletes the task: it is hidden from listings/searches and becomes
     /// eligible for purging (see `Storage::purge_deleted_tasks`), but its
     /// `category_id` is left untouched. Keeping the real category is the
-    /// whole point of this design (issue #29) - it's what makes `restore`
+    /// whole point of this design - it's what makes `restore`
     /// trivial and stops category deletion from ever masquerading as task
     /// deletion.
     pub fn soft_delete(&mut self) {
@@ -75,7 +75,7 @@ impl Task {
 
     /// Un-deletes the task. Because `soft_delete` never touched
     /// `category_id`, this is all a restore takes - the task goes straight
-    /// back where it came from (issue #31). Reachable from the CLI as
+    /// back where it came from. Reachable from the CLI as
     /// `trtodo deleted restore <title or id>`.
     pub fn restore(&mut self) {
         self.deleted_at = None;

@@ -1,7 +1,7 @@
-//! End-to-end coverage of `trtodo config set storage.type=...`, for issue #17.
+//! End-to-end coverage of `trtodo config set storage.type=...`.
 //!
-//! The residue of that issue, once the original "file is not a database" panic
-//! was gone, was this: each backend keeps its own data file, so changing
+//! Once the original "file is not a database" panic was gone, this was what
+//! remained: each backend keeps its own data file, so changing
 //! `storage.type` made every category and task vanish from view. Nothing was
 //! destroyed - the old file sat there untouched and switching back revealed it
 //! again - but the only explanation offered was "Warning: Changing storage

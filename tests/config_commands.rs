@@ -1,5 +1,5 @@
-//! End-to-end coverage of `trtodo config ...`, for issue #22 ("Config
-//! defaults are declared but never applied").
+//! End-to-end coverage of `trtodo config ...`, pinning down that declared
+//! config defaults are actually applied.
 //!
 //! Every invocation is pointed at a `--config` file inside a `TempDir`, and
 //! `$HOME` is pointed at a path that doesn't exist, so the real
@@ -82,7 +82,7 @@ fn find<'a>(entries: &'a [(String, String, bool)], key: &str) -> &'a (String, St
 
 /// A fresh install (no config file ever written) must report the README's
 /// documented defaults, each marked with `*` - not `null`. This is the
-/// primary regression test for issue #22.
+/// primary regression test for defaults being declared but never applied.
 #[test]
 fn fresh_install_reports_documented_defaults() {
     let trtodo = Trtodo::new();
@@ -119,7 +119,7 @@ fn fresh_install_reports_documented_defaults() {
     );
 }
 
-/// Regression test for issue #22's second, easier-to-miss half: once the
+/// Regression test for the second, easier-to-miss half of that bug: once the
 /// config file exists (because *one* key was set), every *other* key must
 /// still report as a default on the next invocation - not as an explicit
 /// `null`. A `Default` impl alone fixes the fresh-install case above but not

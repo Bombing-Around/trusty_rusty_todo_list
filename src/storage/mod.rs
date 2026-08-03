@@ -43,7 +43,7 @@ impl StorageType {
     /// *directory*.
     ///
     /// Every backend gets its own file name on purpose. Pointing two backends
-    /// at one path is how issue #17's original "file is not a database" panic
+    /// at one path is how the original "file is not a database" panic
     /// happened, and how `JsonStorage::save` (a bare `std::fs::write`, with no
     /// format check) could silently clobber a SQLite database. Distinct names
     /// make that structurally impossible rather than merely unlikely - at the
@@ -190,7 +190,7 @@ pub trait Storage {
     ///
     /// Unlike `get_next_task_id`, this deliberately fills gaps rather than
     /// always handing out `max + 1`: the README specifies that "when deleting a
-    /// category it is removed and its ID is made available again" (issue #16).
+    /// category it is removed and its ID is made available again".
     /// ID 0 is never returned - it is reserved for the magic "Uncategorized"
     /// category.
     fn get_next_category_id(&self) -> Result<u64, StorageError> {
@@ -268,8 +268,8 @@ pub trait Storage {
     /// meaning "Uncategorized" (`category_manager::UNCATEGORIZED_ID`):
     /// deleting a *category* reassigns its tasks to 0, which would make them
     /// show up here as deleted and be destroyed by a purge the user never
-    /// asked for. Issue #29 fixed this by keying deletion off `deleted_at`
-    /// instead of `category_id`, so category deletion and task deletion can
+    /// asked for. Keying deletion off `deleted_at` instead of
+    /// `category_id` fixed that, so category deletion and task deletion can
     /// no longer be confused with each other.
     fn get_deleted_tasks(&self) -> Result<Vec<Task>, StorageError> {
         let data = self.load()?;
@@ -426,7 +426,7 @@ pub trait Storage {
 
 /// What `migrate_storage` actually did, so the caller can tell the user the
 /// truth instead of printing an unconditional "may require data migration"
-/// warning (issue #17).
+/// warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MigrationOutcome {
     /// The source store holds no tasks and no categories, so there was
@@ -453,7 +453,7 @@ fn is_empty(data: &StorageData) -> bool {
 
 /// Copies everything in `source` into `destination`, for when the user
 /// changes `storage.type` and would otherwise watch all their tasks and
-/// categories vanish (issue #17).
+/// categories vanish.
 ///
 /// Backend-agnostic on purpose: it speaks only `Storage`, so json -> sqlite
 /// and sqlite -> json are the same code path, and any future backend gets the
@@ -564,7 +564,7 @@ mod tests {
         data
     }
 
-    /// The headline issue #17 behaviour: switching backends must carry the
+    /// The headline behaviour: switching backends must carry the
     /// user's data across, not silently strand it in a file nothing reads
     /// anymore. Exercised across *real* backends (JSON -> SQLite), since the
     /// whole point is that the two formats are involved.
@@ -729,7 +729,7 @@ mod tests {
 
     /// The file names are what keep the two backends from ever being pointed
     /// at the same path (see `StorageType::data_file_name`), so they are worth
-    /// pinning: making them equal would silently re-open issue #17's original
+    /// pinning: making them equal would silently re-open the original
     /// "file is not a database" failure.
     #[test]
     fn test_each_backend_has_its_own_data_file_name() {
@@ -761,7 +761,7 @@ mod tests {
         assert!(sqlite_storage.load().is_ok());
     }
 
-    /// Encodes the requirement from issue #17: switching storage backends against
+    /// Switching storage backends against
     /// a file that already holds data in a *different* backend's format must fail
     /// gracefully with a typed `StorageError`, not panic and not silently succeed
     /// with wrong/empty data.
@@ -811,14 +811,14 @@ mod tests {
         );
     }
 
-    /// Issue #29 regression test: deleting a *category* reassigns its tasks
+    /// Regression test: deleting a *category* reassigns its tasks
     /// to the magic "Uncategorized" ID (`category_manager::UNCATEGORIZED_ID`,
     /// which is 0). Before this fix, `get_deleted_tasks` treated
     /// `category_id == 0` as "this task is deleted", so a task merely
     /// orphaned by deleting its category would be misreported as deleted -
     /// and a subsequent `purge_deleted_tasks` flush would destroy it, even
-    /// though the user never asked to delete that task. This is the
-    /// data-loss scenario #29 exists to close off.
+    /// though the user never asked to delete that task. That is the
+    /// data-loss scenario soft deletion exists to close off.
     #[test]
     fn test_category_deletion_does_not_orphan_tasks_into_deleted() {
         use crate::category_manager::{CategoryManager, UNCATEGORIZED_ID};
@@ -854,7 +854,7 @@ mod tests {
         let deleted = storage.get_deleted_tasks().unwrap();
         assert!(
             deleted.is_empty(),
-            "task orphaned by category deletion must not appear in get_deleted_tasks (issue #29)"
+            "task orphaned by category deletion must not appear in get_deleted_tasks"
         );
     }
 
@@ -937,7 +937,7 @@ mod tests {
     /// `purge_deleted_tasks(n)` must key strictly off `deleted_at`, dropping
     /// tasks deleted more than `n` days ago and keeping recently-deleted
     /// ones. Crucially, a task's `updated_at` must have no bearing on this -
-    /// that decoupling was the second bug named in issue #29 (editing a
+    /// that decoupling fixed a second, subtler bug (editing a
     /// soft-deleted task used to silently reset its purge clock, because the
     /// old implementation judged `updated_at` instead of `deleted_at`).
     #[test]

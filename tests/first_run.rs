@@ -1,5 +1,5 @@
 //! End-to-end coverage of the first-run offer to create the default "Home"
-//! and "Work" categories (issue #27, the last open bullet of issue #4).
+//! and "Work" categories.
 //!
 //! Every invocation is pointed at a `--config` file inside a `TempDir`, with
 //! `storage.path` pointing at that same `TempDir` and `$HOME` pointing at a

@@ -232,7 +232,7 @@ mod tests {
     }
 
     /// Data written before `deleted_at` existed has no such key on its tasks;
-    /// it must still load, coming back as "not deleted" (issue #29).
+    /// it must still load, coming back as "not deleted".
     #[test]
     fn test_load_task_without_deleted_at_field() {
         let dir = tempdir().unwrap();

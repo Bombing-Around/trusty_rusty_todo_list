@@ -152,14 +152,14 @@ impl<'a> TaskManager<'a> {
         Ok(Some(task))
     }
 
-    /// Soft-deletes a task (issue #29): it disappears from every listing/
+    /// Soft-deletes a task: it disappears from every listing/
     /// search but keeps its real category and can still be found by ID.
     pub fn delete_task(&self, task_id: u64) -> Result<(), TaskManagerError> {
         Ok(self.storage.soft_delete_task(task_id)?)
     }
 
     /// Every currently soft-deleted task, oldest deletion first
-    /// (`trtodo deleted list`; issue #32).
+    /// (`trtodo deleted list`).
     ///
     /// Sorted by `deleted_at` deliberately: this list doubles as the preview
     /// of what a `flush` would destroy and of what the automatic
@@ -174,7 +174,7 @@ impl<'a> TaskManager<'a> {
     }
 
     /// Resolves a `<title or id>` CLI argument to a single *soft-deleted*
-    /// task, for `trtodo deleted restore` (issue #31).
+    /// task, for `trtodo deleted restore`.
     ///
     /// This is the inverse scope of `resolve_task`, and it has to be its own
     /// method rather than a flag on that one: every title/ID lookup helper
@@ -226,11 +226,12 @@ impl<'a> TaskManager<'a> {
         }
     }
 
-    /// Restores a soft-deleted task (issue #31), returning the category ID it
+    /// Restores a soft-deleted task, returning the category ID it
     /// actually landed in so the CLI can name it in its confirmation.
     ///
     /// Normally that is simply the task's own `category_id`, untouched since
-    /// before the delete - which is the entire point of issue #29's design.
+    /// before the delete - which is the entire point of soft deletion keeping
+    /// the real `category_id`.
     /// See `restore_destination` for the one case where it isn't.
     pub fn restore_task(&self, mut task: Task) -> Result<u64, TaskManagerError> {
         let destination =
@@ -259,7 +260,7 @@ impl<'a> TaskManager<'a> {
     /// why this is a distinct primitive from the automatic,
     /// `deleted-task-lifespan`-gated purge below.
     ///
-    /// Returns the tasks it removed, not just a count (issue #32): the CLI
+    /// Returns the tasks it removed, not just a count: the CLI
     /// reports *what* was destroyed, and by the time it could go and look
     /// the rows are gone. The snapshot is taken here, immediately before the
     /// purge, so what comes back is what this call actually destroyed -
@@ -357,8 +358,8 @@ impl<'a> TaskManager<'a> {
 }
 
 /// Where a restored task should land, given the category it remembers and
-/// whether that category still exists (issue #31 called this out as needing
-/// a decision rather than an accident).
+/// whether that category still exists. Worth a deliberate decision rather
+/// than an accident, since both outcomes are defensible.
 ///
 /// The decision: fall back to Uncategorized. A task whose category is gone
 /// still has to go *somewhere*, Uncategorized is the one category that can
@@ -384,8 +385,8 @@ fn restore_destination(category_id: u64, category_exists: bool) -> u64 {
 }
 
 /// Asks the user to confirm an irreversible `deleted flush` of `pending`
-/// tasks, through the same `Prompter` seam as every other prompt in the app
-/// (issue #32). Returns whether they said yes.
+/// tasks, through the same `Prompter` seam as every other prompt in the
+/// app. Returns whether they said yes.
 ///
 /// A `PromptError::NotInteractive` here is not a failure of this function -
 /// it is the answer "there is nobody to ask", which the CLI turns into a
@@ -579,7 +580,7 @@ mod tests {
         manager.delete_task(deleted_id).unwrap();
 
         // The flush reports the tasks it destroyed, not just how many
-        // (issue #32) - nobody can go and look afterwards.
+        // - nobody can go and look afterwards.
         let purged = manager.flush_deleted().unwrap();
         assert_eq!(purged.len(), 1);
         assert_eq!(purged[0].id, deleted_id);
@@ -765,8 +766,9 @@ mod tests {
             .unwrap();
         let destination = manager.restore_task(task).unwrap();
 
-        // Lossless: same category it was deleted from (issue #29's design
-        // is what makes this free), and the priority survives too.
+        // Lossless: same category it was deleted from (keeping the real
+        // `category_id` is what makes this free), and the priority survives
+        // too.
         assert_eq!(destination, 1);
         let restored = storage.get_task(id).unwrap().unwrap();
         assert!(!restored.is_deleted());

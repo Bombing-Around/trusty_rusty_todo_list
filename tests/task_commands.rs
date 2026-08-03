@@ -79,7 +79,7 @@ fn add_defaults_priority_from_config_and_lists_it() {
     trtodo.ok(&["category", "add", "Work"]);
 
     // No --priority: falls back to the configured/documented default
-    // (medium), not a hardcoded value (issue #22).
+    // (medium), not a hardcoded value.
     let out = trtodo.ok(&["add", "Buy milk", "--category", "Work"]);
     assert!(out.contains("added with ID 1"), "{out}");
 
@@ -115,8 +115,8 @@ fn add_defaults_priority_from_config_and_lists_it() {
     );
 }
 
-/// Issue #33: `--category` is optional on `add`, and the four resolution
-/// steps must be tried in order, most specific first.
+/// `--category` is optional on `add`, and the four resolution steps must be
+/// tried in order, most specific first.
 #[test]
 fn add_resolves_its_category_in_precedence_order() {
     let trtodo = Trtodo::new();

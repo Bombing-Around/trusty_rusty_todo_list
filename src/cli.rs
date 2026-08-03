@@ -22,8 +22,8 @@ pub struct Cli {
     )]
     pub config: Option<PathBuf>,
 
-    // These two are the non-interactive escape hatch for scripts and CI
-    // (issue #27): they let an invocation answer the first-run offer of the
+    // These two are the non-interactive escape hatch for scripts and CI:
+    // they let an invocation answer the first-run offer of the
     // default categories without a terminal, so automation is never blocked
     // waiting on input. Questions with no yes/no answer - picking between
     // several tasks that share a name - are still refused under both flags
@@ -211,11 +211,11 @@ pub enum CategoryCommands {
 }
 
 /// The `deleted` namespace: everything you can do with the tasks that
-/// `trtodo delete` soft-deleted (issue #29's `deleted_at` timestamp).
+/// `trtodo delete` soft-deleted (the `deleted_at` timestamp).
 ///
 /// `list` and `restore` were previously absent on the grounds that the
-/// README documented only `flush`; issues #31 and #32 settled that surface
-/// and the README now documents all three. They are not optional extras:
+/// README documented only `flush`; the README now documents all three.
+/// They are not optional extras:
 /// soft-deleted tasks are hidden from `list` and `search`, so without
 /// `deleted list` they are invisible right up until `flush` destroys them,
 /// and without `deleted restore` a soft delete is just a slower hard delete.
@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(cli.config, None);
     }
 
-    /// The non-interactive flags for issue #27's first-run offer. Both are
+    /// The non-interactive flags for the first-run offer. Both are
     /// global (usable before or after the subcommand) and mutually
     /// exclusive - "assume yes" and "assume no" cannot both hold.
     #[test]
@@ -326,7 +326,7 @@ mod tests {
             _ => panic!("Expected Add command"),
         }
 
-        // `--category` is optional (issue #33): omitting it parses cleanly and
+        // `--category` is optional: omitting it parses cleanly and
         // leaves resolution to `main::resolve_add_category`.
         let cli = parse_args(&["trtodo", "add", "Buy milk"]);
         match cli.command {
@@ -514,8 +514,8 @@ mod tests {
 
     #[test]
     fn test_required_arguments() {
-        // `add` used to require `--category`; issue #33 made it optional so
-        // the `category use` context and the `default-category` config value
+        // `add` used to require `--category`; it is now optional so the
+        // `category use` context and the `default-category` config value
         // can supply it. Parsing must therefore *succeed* without it - the
         // decision of where the task lands moved to `main`, which has the
         // storage and config access needed to make it.

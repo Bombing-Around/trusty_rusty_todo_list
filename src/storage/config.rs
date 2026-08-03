@@ -20,8 +20,8 @@ impl Storage for ConfigStorage {
         // The config file holds only the config half of `StorageData` (tasks
         // and categories live in the separate data file). Cloning the whole
         // `Config` rather than rebuilding it field by field means a newly
-        // added field - like issue #27's `default_categories_offered` marker
-        // - can't be silently dropped on save.
+        // added field - like the `default_categories_offered` first-run
+        // marker - can't be silently dropped on save.
         let config = data.config.clone();
 
         // Create parent directories if they don't exist
@@ -130,7 +130,7 @@ mod tests {
             loaded_data.config.default_priority,
             Some("medium".to_string())
         );
-        // The issue #27 first-run marker round-trips like any other field.
+        // The first-run marker round-trips like any other field.
         assert_eq!(loaded_data.config.default_categories_offered, Some(true));
     }
 
@@ -163,11 +163,11 @@ mod tests {
         assert_eq!(loaded_data.config.default_category, None);
         assert_eq!(loaded_data.config.default_priority, None);
         // No first-run marker either way, which is what makes both of these
-        // count as a first run (issue #27).
+        // count as a first run.
         assert_eq!(loaded_data.config.default_categories_offered, None);
     }
 
-    /// Regression test for issue #22's second half: writing a config with
+    /// Regression test: writing a config with
     /// only one field set must not materialize explicit JSON `null`s for the
     /// rest, or the next `load()` would see those keys as *present* and
     /// never fall back to a default for them.

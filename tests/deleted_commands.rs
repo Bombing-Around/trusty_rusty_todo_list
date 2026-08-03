@@ -1,6 +1,6 @@
-//! End-to-end coverage of the `trtodo deleted` namespace - `list` (issue
-//! #32), `restore` (issue #31), `flush` and its confirmation (issues #6,
-//! #32) - plus the automatic purge driven by `deleted-task-lifespan`.
+//! End-to-end coverage of the `trtodo deleted` namespace - `list`,
+//! `restore`, `flush` and its confirmation - plus the automatic purge
+//! driven by `deleted-task-lifespan`.
 //!
 //! Note that every invocation here is by definition non-interactive: the
 //! binary is spawned with `Command::output()`, so its stdin is not a
@@ -14,9 +14,9 @@
 //! `~/.config/trtodo` and the developer's actual todo data are never read or
 //! written. This mirrors `tests/task_commands.rs`/`tests/category_commands.rs`'s
 //! harness exactly - see `home_guard` below, which is the load-bearing part:
-//! a previous PR (#15) was rejected specifically because its test suite wiped
-//! the developer's real todo data, and this issue is about destroying data,
-//! so the guard is asserted on explicitly rather than just relied upon.
+//! an earlier attempt was rejected specifically because its test suite wiped
+//! the developer's real todo data, and these commands are about destroying
+//! data, so the guard is asserted on explicitly rather than just relied upon.
 
 use std::path::Path;
 use std::process::Command;
@@ -217,7 +217,7 @@ fn deleted_list_shows_id_title_category_and_deletion_date() {
     assert!(out.contains("Deleted tasks:"), "{out}");
     assert!(out.contains(&format!("{id}: Buy milk")), "{out}");
     // The *real* category, by name - soft deletion keeps `category_id`
-    // intact (issue #29), which is exactly what makes the restore below
+    // intact, which is exactly what makes the restore below
     // lossless.
     assert!(out.contains("category: Work"), "{out}");
     // A deletion date in the documented format. Only the "deleted: <year>"
@@ -382,7 +382,7 @@ fn flush_reports_which_tasks_it_removed() {
     trtodo.ok(&["delete", "Walk dog", "--category", "Work"]);
 
     // A count alone leaves the user with no way to find out what they lost -
-    // the rows are gone by the time they could look (issue #32).
+    // the rows are gone by the time they could look.
     let out = trtodo.ok(&["deleted", "flush", "--yes"]);
     assert!(
         out.contains("The following 2 task(s) will be permanently removed:"),

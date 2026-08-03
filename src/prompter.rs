@@ -3,10 +3,10 @@
 //! The README says: "When operating on a `task_name`, the application will
 //! try to match the name - if it encounters the same name in multiple
 //! categories, it will prompt the user for which item on which to operate."
-//! A prior attempt at this (PR #15) wired that up with a bare inline
+//! An earlier attempt wired that up with a bare inline
 //! `std::io::stdin().read_line(...)` call, which made it impossible to write
 //! a test that exercises the disambiguation flow without a real terminal
-//! attached - that PR was rejected for exactly this reason.
+//! attached - it was rejected for exactly this reason.
 //!
 //! `Prompter` factors "ask the user something" behind a trait, so:
 //!   - production code uses `StdinPrompter`, which reads real input but
@@ -23,7 +23,7 @@
 //!   - `choose`, "pick one of these labelled options" (the ambiguous-task
 //!     flow above, and the deferred `reset` command);
 //!   - `confirm`, "yes or no?" (the first-run offer to create the default
-//!     "Home"/"Work" categories, issue #27).
+//!     "Home"/"Work" categories).
 
 use std::io::{self, BufRead, IsTerminal, Write};
 use thiserror::Error;
@@ -81,7 +81,7 @@ fn parse_selection(line: &str, option_count: usize) -> Result<usize, PromptError
 /// Interprets a raw line of input as a yes/no answer, returning `None` for
 /// anything unrecognized so the caller can re-ask. An empty line (a bare
 /// Enter) means the offered default, which is what makes the first-run
-/// prompt "default to yes" (issue #27). Factored out for the same reason as
+/// prompt "default to yes". Factored out for the same reason as
 /// `parse_selection`: it is the interesting logic, and it is unit-testable
 /// without a terminal.
 fn parse_confirmation(line: &str, default_yes: bool) -> Option<bool> {
@@ -282,7 +282,7 @@ mod tests {
     }
 
     /// A bare Enter takes whichever default the caller offered - this is what
-    /// makes the first-run offer "default to yes" (issue #27).
+    /// makes the first-run offer "default to yes".
     #[test]
     fn parse_confirmation_treats_an_empty_line_as_the_offered_default() {
         assert_eq!(parse_confirmation("\n", true), Some(true));
