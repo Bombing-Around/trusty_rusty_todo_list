@@ -208,6 +208,32 @@ pub enum CategoryCommands {
     },
     /// List all categories
     List,
+    /// Move a category to a specific position in `category list`
+    ///
+    /// Positions are 1-based, matching every other user-facing identifier
+    /// in this CLI (task and category IDs both start at 1). Position `0`
+    /// is refused: it is the fixed, unassignable position the synthesized
+    /// "Uncategorized" category always sorts at, and `Uncategorized`
+    /// itself cannot be targeted at all, since it is never a real,
+    /// storable category.
+    Order {
+        /// Category name or ID
+        category: String,
+        /// 1-based position to move it to
+        position: u32,
+    },
+    /// Set the order of several categories at once, in the order given
+    ///
+    /// Categories not listed keep whatever order they already had, rather
+    /// than being pushed after the ones just reordered - list every
+    /// category to control the full result. `Uncategorized` cannot appear
+    /// in the list, for the same reason it cannot be targeted by
+    /// `category order`.
+    Reorder {
+        /// Category names or IDs, listed in the order they should appear
+        #[arg(required = true)]
+        categories: Vec<String>,
+    },
 }
 
 /// The `deleted` namespace: everything you can do with the tasks that
@@ -430,6 +456,67 @@ mod tests {
             },
             _ => panic!("Expected Category command"),
         }
+    }
+
+    #[test]
+    fn test_category_order_command() {
+        let cli = parse_args(&["trtodo", "category", "order", "Work", "2"]);
+        match cli.command {
+            Commands::Category { command } => match command {
+                CategoryCommands::Order { category, position } => {
+                    assert_eq!(category, "Work");
+                    assert_eq!(position, 2);
+                }
+                _ => panic!("Expected Category Order command"),
+            },
+            _ => panic!("Expected Category command"),
+        }
+
+        // Position must parse as a non-negative integer; clap rejects
+        // anything else before it ever reaches `main`.
+        assert!(try_parse_args(&["trtodo", "category", "order", "Work", "-1"]).is_err());
+        assert!(try_parse_args(&["trtodo", "category", "order", "Work", "nope"]).is_err());
+        assert!(try_parse_args(&["trtodo", "category", "order", "Work"]).is_err());
+    }
+
+    #[test]
+    fn test_category_reorder_command() {
+        let cli = parse_args(&["trtodo", "category", "reorder", "Work", "Home", "Personal"]);
+        match cli.command {
+            Commands::Category { command } => match command {
+                CategoryCommands::Reorder { categories } => {
+                    assert_eq!(
+                        categories,
+                        vec![
+                            "Work".to_string(),
+                            "Home".to_string(),
+                            "Personal".to_string()
+                        ]
+                    );
+                }
+                _ => panic!("Expected Category Reorder command"),
+            },
+            _ => panic!("Expected Category command"),
+        }
+
+        // A single category is a legal (if degenerate) reorder.
+        let cli = parse_args(&["trtodo", "category", "reorder", "Work"]);
+        match cli.command {
+            Commands::Category { command } => match command {
+                CategoryCommands::Reorder { categories } => {
+                    assert_eq!(categories, vec!["Work".to_string()]);
+                }
+                _ => panic!("Expected Category Reorder command"),
+            },
+            _ => panic!("Expected Category command"),
+        }
+    }
+
+    #[test]
+    fn test_category_reorder_requires_at_least_one_category() {
+        // An empty reorder has nothing to do and is refused at parse time
+        // rather than accepted as a silent no-op.
+        assert!(try_parse_args(&["trtodo", "category", "reorder"]).is_err());
     }
 
     #[test]

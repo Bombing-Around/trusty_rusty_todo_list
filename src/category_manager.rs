@@ -250,9 +250,31 @@ impl<'a> CategoryManager<'a> {
         self.storage.get_category(id)
     }
 
-    // Not yet reachable from the CLI: `trtodo category order` / `reorder` are
-    // not part of the command surface in `cli.rs` yet.
-    #[allow(dead_code)]
+    /// Sets a single category's position in `category list`.
+    ///
+    /// `new_order` is stored verbatim in `Category.order`, which is exactly
+    /// the sort key `list_categories` uses (order, then name) - so this is a
+    /// direct assignment, not an "insert and push everyone else down"
+    /// operation. Positions are 1-based (see the CLI's `category order`
+    /// doc comment for why), and `0` is reserved for the synthesized
+    /// "Uncategorized" category's fixed order - see `uncategorized_category`.
+    /// This function does not enforce that reservation itself, so a caller
+    /// could still hand a *real* category `order == 0` and tie it with
+    /// Uncategorized for the top slot; `main::run_category_command` is what
+    /// actually rejects position `0` before it reaches here, because the
+    /// CLI is the only caller that needs to speak to a user, and other
+    /// callers (tests, a future scripting surface) should stay free to set
+    /// whatever order they like.
+    ///
+    /// Two categories sharing an order value is not an error: they tie, and
+    /// `list_categories`'s secondary sort key (name) decides which comes
+    /// first. Nothing is displaced to make room.
+    ///
+    /// Targeting `UNCATEGORIZED_ID` itself fails - not because this checks
+    /// for it, but because no stored row with that ID exists to update
+    /// (`list_categories` synthesizes it fresh on every call). The CLI
+    /// layer intercepts that case earlier to give a clearer error than the
+    /// generic "not found" this falls through to.
     pub fn set_category_order(
         &mut self,
         category_id: u64,
@@ -270,7 +292,27 @@ impl<'a> CategoryManager<'a> {
         }
     }
 
-    #[allow(dead_code)]
+    /// Sets the order of several categories at once by listing them in the
+    /// order they should appear.
+    ///
+    /// Assigns positions `1..=category_ids.len()`, in list order. This is
+    /// 1-based for the same reason `set_category_order` is: `0` is the
+    /// synthesized "Uncategorized" category's fixed, unassignable order.
+    /// A 0-based assignment would have handed the *first* listed category
+    /// that same value and let it race Uncategorized alphabetically for the
+    /// top slot on a tie, quietly breaking `list_categories`'s "always
+    /// first" guarantee for whichever category happened to be listed first.
+    ///
+    /// Categories not named here are left untouched - their existing
+    /// `order` stays whatever it was. That is a deliberate partial update,
+    /// not an omission: a category with a low pre-existing order can
+    /// therefore still sort between, or even before, the ones just
+    /// renumbered, rather than always being pushed after them. Renumbering
+    /// the rest to guarantee "unlisted always sorts last" would mean this
+    /// function reaching into and rewriting categories the caller never
+    /// mentioned, which is a bigger surprise than a partial reorder leaving
+    /// a partial order. A caller that wants full control over the result
+    /// lists every category.
     pub fn reorder_categories(&mut self, category_ids: Vec<u64>) -> Result<(), StorageError> {
         let mut data = self.storage.load()?;
 
@@ -284,10 +326,11 @@ impl<'a> CategoryManager<'a> {
             }
         }
 
-        // Update orders
-        for (order, id) in category_ids.iter().enumerate() {
+        // Update orders, 1-based - see the doc comment above for why 0 is
+        // never handed out here.
+        for (index, id) in category_ids.iter().enumerate() {
             if let Some(category) = data.categories.iter_mut().find(|c| c.id == *id) {
-                category.set_order(order as u32);
+                category.set_order(index as u32 + 1);
             }
         }
 
@@ -546,6 +589,94 @@ mod tests {
         assert!(manager
             .update_category(id, "Uncategorized".to_string())
             .is_err());
+    }
+
+    /// `reorder_categories` assigns 1-based positions in list order, not
+    /// 0-based - see the doc comment on `reorder_categories` for why 0
+    /// staying unassigned matters.
+    #[test]
+    fn test_reorder_categories_assigns_one_based_positions() {
+        let test_storage = TestStorage::new();
+        let mut manager = CategoryManager::new(test_storage.storage());
+
+        let a = manager.add_category("A".to_string(), None).unwrap();
+        let b = manager.add_category("B".to_string(), None).unwrap();
+        let c = manager.add_category("C".to_string(), None).unwrap();
+
+        manager.reorder_categories(vec![c, a, b]).unwrap();
+
+        let categories = manager.list_categories().unwrap();
+        let order_of = |name: &str| {
+            categories
+                .iter()
+                .find(|cat| cat.name == name)
+                .unwrap()
+                .order
+        };
+        assert_eq!(order_of("C"), 1);
+        assert_eq!(order_of("A"), 2);
+        assert_eq!(order_of("B"), 3);
+
+        // Uncategorized's order (0) was never handed out, so it is still
+        // sorted first ahead of everything reordered above it.
+        assert_eq!(categories[0].name, "Uncategorized");
+        assert_eq!(categories[0].order, 0);
+    }
+
+    /// A partial `reorder_categories` call renumbers only the categories it
+    /// is given; anything left out keeps its prior order rather than being
+    /// pushed after the renumbered ones.
+    #[test]
+    fn test_reorder_categories_partial_list_leaves_others_untouched() {
+        let test_storage = TestStorage::new();
+        let mut manager = CategoryManager::new(test_storage.storage());
+
+        let a = manager.add_category("A".to_string(), None).unwrap(); // default order 1
+        let b = manager.add_category("B".to_string(), None).unwrap(); // default order 2
+        let c = manager.add_category("C".to_string(), None).unwrap(); // default order 3
+
+        // Only reorder B and C; A is left alone.
+        manager.reorder_categories(vec![c, b]).unwrap();
+
+        let categories = manager.list_categories().unwrap();
+        let order_of = |id: u64| categories.iter().find(|cat| cat.id == id).unwrap().order;
+
+        assert_eq!(order_of(a), 1); // untouched
+        assert_eq!(order_of(c), 1); // newly assigned - ties with A
+        assert_eq!(order_of(b), 2);
+    }
+
+    /// Setting two categories to the same order does not error or displace
+    /// anything; `list_categories`'s secondary sort key (name) breaks the
+    /// tie deterministically.
+    #[test]
+    fn test_set_category_order_collision_breaks_tie_by_name() {
+        let test_storage = TestStorage::new();
+        let mut manager = CategoryManager::new(test_storage.storage());
+
+        let a = manager.add_category("Zebra".to_string(), None).unwrap();
+        let b = manager.add_category("Apple".to_string(), None).unwrap();
+
+        manager.set_category_order(a, 5).unwrap();
+        manager.set_category_order(b, 5).unwrap();
+
+        let categories = manager.list_categories().unwrap();
+        let names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
+        // Both tied at order 5, so "Apple" sorts before "Zebra".
+        assert_eq!(names, vec!["Uncategorized", "Apple", "Zebra"]);
+    }
+
+    /// `Uncategorized` is never a stored row (see `uncategorized_category`),
+    /// so there is nothing for either ordering function to update - both
+    /// fail rather than silently no-op.
+    #[test]
+    fn test_ordering_functions_reject_uncategorized() {
+        let test_storage = TestStorage::new();
+        let mut manager = CategoryManager::new(test_storage.storage());
+        manager.add_category("Work".to_string(), None).unwrap();
+
+        assert!(manager.set_category_order(UNCATEGORIZED_ID, 1).is_err());
+        assert!(manager.reorder_categories(vec![UNCATEGORIZED_ID]).is_err());
     }
 
     /// `has_explicit_category_context` must not be fooled by
