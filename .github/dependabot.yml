@@ -1,0 +1,34 @@
+# Dependency updates.
+#
+# Enabled rather than declined: the pinned action versions and crate versions
+# were drifting silently, and the alternative to automation here is a human
+# remembering to re-check them, which is the same failure mode the test-count
+# tripwire was written to avoid.
+#
+# Monthly, not weekly. This is a small CLI with a bundled SQLite build; a
+# weekly cadence on a tree this size produces more pull requests than signal,
+# and a batch that is ignored is worse than no batch.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    # One pull request for all non-major bumps. Majors stay separate because
+    # they are the ones that need a human to read a changelog.
+    groups:
+      cargo-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - "*"
