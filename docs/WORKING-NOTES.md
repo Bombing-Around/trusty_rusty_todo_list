@@ -30,8 +30,18 @@ how to spend fewer tokens getting the same work done.
   CI runs the strict form. A bare clippy run that looks clean proves
   nothing about whether CI will pass.
 
-- **Current state:** 173 tests across 7 binaries (111 unit + 15 + 3 + 14 + 7
-  + 6 + 17). If that total drops, something was deleted rather than fixed.
+- **CI reports the test count, per binary and total, in every run's job
+  summary.** If that total drops, something was deleted rather than fixed —
+  that is the one thing the number is for, and it is the direction of the
+  number that matters, not the value. It is deliberately not a coverage
+  target and deliberately not a hard CI failure; a build that breaks on a
+  decreasing count also breaks on legitimate consolidation, and then people
+  learn to override it.
+
+  The count is not repeated here on purpose. It used to be, and it drifted
+  into two different stale numbers in two documents — which is worse than no
+  number, because a written one gets quoted instead of re-derived. Read it
+  off the latest CI run, or `cargo test` locally.
 
 - **A shared `CARGO_TARGET_DIR` across worktrees will lie to you.** Sharing one
   target directory between parallel worktrees looks like an easy way to avoid

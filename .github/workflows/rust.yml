@@ -77,4 +77,39 @@ jobs:
       run: cargo clippy -- -D warnings
 
     - name: Run tests
-      run: cargo test --verbose 
+      run: cargo test --verbose
+
+    # A raw test count is this project's cheapest tripwire for its known
+    # failure mode: a test deleted rather than a bug fixed. Reported, not
+    # enforced - a hard failure on a decreasing count would also fire on
+    # legitimate consolidation, which just teaches people to override it.
+    # The direction of the number is the signal; this is not a coverage
+    # target, which the working notes reject explicitly.
+    #
+    # Counted by asking each test harness for its own list rather than by
+    # parsing `cargo test` output: cargo writes the "Running <binary>"
+    # headers to stderr and each harness writes its "test result" line to
+    # stdout, so merging the two streams to pair a name with a count relies
+    # on interleaving that buffering does not guarantee.
+    - name: Report test counts
+      shell: bash
+      run: |
+        set -uo pipefail
+        total=0
+        rows=""
+        while read -r name exe; do
+          n=$("$exe" --list 2>/dev/null | grep -c ': test$' || true)
+          rows+="| \`$name\` | $n |"$'\n'
+          total=$((total + n))
+        done < <(cargo test --no-run --message-format=json 2>/dev/null \
+          | jq -r 'select(.executable != null and .profile.test == true)
+                   | "\(.target.name) \(.executable)"' \
+          | sort)
+        {
+          echo "### Test counts"
+          echo
+          echo "| Test binary | Tests |"
+          echo "| --- | --- |"
+          printf '%s' "$rows"
+          echo "| **Total** | **$total** |"
+        } | tee -a "$GITHUB_STEP_SUMMARY" 
