@@ -33,7 +33,7 @@ expensive the longer there is code depending on the answer.
 
 | Issue | What |
 | --- | --- |
-| ~~#45~~ | **Landed.** Package metadata, `license = "GPL-3.0-only"` matching the tree, `publish = false`, and `rust-version = "1.78"` — the floor the suite is verified against, with a CI job that keeps it true. |
+| ~~#45~~ | **Landed.** Package metadata, `license = "GPL-3.0-only"` matching the tree, and `rust-version = "1.78"` — the floor the suite is verified against, with a CI job that keeps it true. Left publishable, with `cargo publish --dry-run` in CI. |
 | ~~#46~~ | **Landed.** `test` is a matrix across Linux, macOS, and Windows; `fmt`/`clippy` split into a job that runs once. Dependabot enabled, monthly and grouped. |
 | ~~#47~~ | **Landed.** `tempfile` is a dev-dependency only. |
 | #44 | The release workflow itself: tag-triggered cross-platform binaries, checksums, generated notes, a real install section. |
@@ -56,6 +56,15 @@ re-litigating:
   decreasing count also fires on legitimate consolidation, and a check people
   learn to override is worse than no check. The direction of the number is the
   signal.
+- **The crate is kept publishable, and CI packages it on every run.** crates.io
+  is a possible destination rather than a settled one; `publish = false` would
+  have blocked the dry run too, letting the manifest rot unpublishable with
+  nothing to report it. One thing is still open and gets more expensive after
+  a first publish, not less: the package name (`trusty_rusty_todo_list`) and
+  the binary name (`trtodo`) differ, so installing would be
+  `cargo install trusty_rusty_todo_list` to get a `trtodo`. Both names were
+  unregistered when this was written, and neither is reserved by saying so —
+  publishing is the only thing that holds a name.
 
 ## Phase 2 — dates and times
 

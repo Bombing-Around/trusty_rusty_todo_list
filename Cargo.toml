@@ -21,10 +21,25 @@ categories = ["command-line-utilities"]
 # into another claim nobody checks.
 rust-version = "1.78"
 
-# Releases are prebuilt binaries, not a crates.io package. Set explicitly so an
-# accidental `cargo publish` cannot happen; flip it if that ever changes, and
-# note the package name and the binary name (trtodo) deliberately differ.
-publish = false
+# Deliberately left publishable rather than set to `publish = false`.
+#
+# crates.io is a possible destination, so the manifest is kept in a state where
+# `cargo publish` would succeed - description, license, repository, keywords,
+# and categories are all present and valid, and `cargo publish --dry-run` is
+# what verifies that rather than inspection. The cost of the other choice is
+# not the one line it takes to flip: `publish = false` also blocks the dry run,
+# so the manifest would rot unpublishable without anything reporting it.
+#
+# Both `trusty_rusty_todo_list` and `trtodo` were unregistered when this was
+# written. Neither is reserved by saying so here - crates.io has no mechanism
+# for that short of publishing - so if the name matters, publishing an early
+# version is the only thing that holds it.
+#
+# Note the package name and the binary name differ: installing this would be
+# `cargo install trusty_rusty_todo_list` to get a `trtodo` on your PATH. That
+# is allowed, and it is worth deciding on purpose before a first publish
+# rather than after, because the package name is the half that cannot be
+# changed afterwards.
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

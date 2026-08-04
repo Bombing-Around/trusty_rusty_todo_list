@@ -80,6 +80,15 @@ jobs:
     - name: Clippy
       run: cargo clippy -- -D warnings
 
+    # crates.io is a possible destination, so the manifest is kept publishable
+    # and this is what keeps it that way. Packaging catches the failures that
+    # inspection does not: a missing required field, an invalid category slug,
+    # a file the package needs but .gitignore excludes, or a source tree that
+    # only builds because of something untracked sitting in the working copy.
+    # None of those are visible until something actually packages the crate.
+    - name: Check the crate still packages
+      run: cargo publish --dry-run
+
   # The declared floor in Cargo.toml, exercised. Without this the rust-version
   # field is a claim rather than a fact, and a dependency bump can raise the
   # real floor with nothing to notice - which is the state this replaced.
