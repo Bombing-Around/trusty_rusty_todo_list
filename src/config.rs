@@ -490,12 +490,30 @@ mod tests {
         assert!(manager.set("storage.type", "json").is_ok());
         assert_eq!(manager.get("storage.type"), Some("json".to_string()));
 
-        // Test setting storage path
-        let storage_path = "~/.config/trt";
-        assert!(manager.set("storage.path", storage_path).is_ok());
+        // Test setting storage path.
+        //
+        // The path comes from the TempDir rather than a hardcoded
+        // `~/.config/...` because `validate_storage_path` rejects a path whose
+        // parent does not exist. `~/.config` is a Unix convention that happens
+        // to exist on the Linux and macOS runners and does not exist on a
+        // fresh Windows one, so hardcoding it made this assert on ambient
+        // filesystem state rather than on the code under test.
+        let storage_path = temp_dir
+            .path()
+            .join("storage")
+            .to_string_lossy()
+            .to_string();
+        assert!(manager.set("storage.path", &storage_path).is_ok());
+        assert_eq!(manager.get("storage.path"), Some(storage_path));
+
+        // Tilde expansion is part of the contract, so it keeps its own
+        // assertion - against `~` itself, which resolves to the home directory
+        // on every platform and whose parent (`/home`, `/Users`, `C:\Users`)
+        // therefore exists on every platform.
+        assert!(manager.set("storage.path", "~").is_ok());
         assert_eq!(
             manager.get("storage.path"),
-            Some(shellexpand::tilde(storage_path).to_string())
+            Some(shellexpand::tilde("~").to_string())
         );
 
         // Test setting default category
