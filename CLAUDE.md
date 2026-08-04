@@ -166,6 +166,18 @@ Three parallel branches, each squash-merged as one conventional commit.
   are gone. Positions are 1-based — see the Uncategorized invariant above for
   why 0 is not available.
 
+## State as of PR #58
+
+`src/` contains no `#[allow(dead_code)]`, and that is the state to preserve.
+Eighteen of them had accumulated, nearly all on whole `impl` blocks and traits
+rather than single items, which switched off reachability analysis across
+hundreds of lines at a time; fourteen genuinely unreachable items were hiding
+behind them, including a hard `Storage::delete_task` next to `soft_delete_task`
+and a `ConfigManager::save` that would have discarded the stored config.
+
+If something is unused, delete it. If it must stay, mark the *item*, not its
+block, and say why in a comment.
+
 ## Roadmap
 
 `docs/ROADMAP.md` is the plan past phase 1: release engineering first, then
