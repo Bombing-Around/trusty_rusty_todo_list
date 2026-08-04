@@ -1,0 +1,113 @@
+# Roadmap
+
+Where this project goes after phase 1, and why in that order.
+
+The README names four phases and has since the first commit. This file is the
+bridge between those sentences and the issues that implement them: what is
+actually left, what has to be decided before it can be built, and what is
+deliberately not being worked on yet.
+
+Issue #43 is the tracking issue and holds the same list as sub-issues. When
+the two disagree, the issues win — this file is a map, not a database.
+
+---
+
+## Where phase 1 landed
+
+Phase 1 as the README describes it — tasks, categories, centralized config,
+JSON storage, "ultimately SQLite" — is done. Both backends exist and migrate
+between each other, categories have a persistent context and an explicit
+order, deletion is soft and reversible, config has defaults, validation, and a
+first-run offer.
+
+What that leaves is a CLI nobody can install and a data model carrying fields
+the CLI never exposes.
+
+---
+
+## Release engineering
+
+First, because none of the rest reaches a user otherwise, and because the
+decisions it forces — supported platforms, MSRV, package identity — get more
+expensive the longer there is code depending on the answer.
+
+| Issue | What |
+| --- | --- |
+| #45 | Package metadata and an MSRV. The manifest is still the `cargo new` default plus dependencies, and the supported Rust version is "whatever stable was when CI last ran". |
+| #46 | CI beyond `ubuntu-latest`. Nothing has ever built or run on macOS or Windows, and the README documents a Windows config path. |
+| #47 | `tempfile` is a normal dependency but only used under `#[cfg(test)]`. |
+| #44 | The release workflow itself: tag-triggered cross-platform binaries, checksums, generated notes, a real install section. |
+| #48 | The documented test count is an invariant nothing enforces, and two documents already disagree about it. |
+
+#44 comes last of these on purpose: building binaries for platforms the suite
+has never run on, from a manifest that does not say what license they are
+under, is publishing guesses.
+
+## Phase 2 — dates and times
+
+Further along than it looks. `Task::due_date` is a real, fully persisted
+field: a `due_date TEXT` column in the SQLite schema, serialized in JSON,
+round-tripped on load, with a setter. The storage half is paid for. The user
+half does not exist — nothing sets a due date, nothing shows one, nothing
+filters on one.
+
+| Issue | What |
+| --- | --- |
+| #49 | Decide the input formats and the display timezone. A decision, not code. |
+| #50 | Expose due dates: set at creation, change, clear, show in `list`, mark overdue. |
+| #51 | Filter and sort by due date, and decide `list`'s sort order explicitly. |
+
+#49 leads because every later piece encodes its answer, and because the one
+timestamp the CLI displays today deliberately punted on the local-time
+question until something forced it. Due dates are that something.
+
+## Phase 3 — reminders
+
+The README's "scheduler / cron / etc." phase. The honest shape for a CLI is
+not a daemon: it is a command that is pleasant to put in a crontab, letting
+the scheduler and the notifier be whatever the user already runs.
+
+| Issue | What |
+| --- | --- |
+| #52 | Machine-readable output (`--format json`). A scheduler needs something to parse, and today every command prints prose whose wording has already changed once. |
+| #53 | The command a scheduler calls: due/overdue tasks, a real exit-code contract, silent when there is nothing to say, never prompting. |
+
+## Phase 4 — sync
+
+Not scoped, and deliberately without issues. It needs a conflict model before
+it needs code; filing implementation issues now would be filing guesses.
+Revisit once phase 3 ships.
+
+---
+
+## Rough edges
+
+Found reviewing the tree against the README rather than against the backlog.
+None blocks a phase. They are on the roadmap because each one is the kind of
+thing that stops being cheap to change once there is a release with users
+behind it.
+
+| Issue | What |
+| --- | --- |
+| #54 | `list` ignores the category context and cannot be scoped to a category, while every other task command honours it. |
+| #55 | `description` is persisted on tasks and categories, threaded through the manager APIs, and can never be set. |
+| #56 | Eighteen blanket `#[allow(dead_code)]` markers, hiding at least four pieces of genuinely unreachable surface. |
+
+## Standing backlog
+
+#19 (split `config.rs`), #20 (test coverage gaps), and #21 (inline docs) predate
+this roadmap and are not duplicated into it. #20's backend-parity bullet and
+#46 overlap deliberately: one is the tests, the other is somewhere to run them.
+
+---
+
+## Deliberately not filed
+
+- **Sync**, above.
+- **Recurring tasks.** Plausible once due dates exist. A repeat rule interacts
+  with soft deletion and completion in ways worth designing against real
+  due-date usage rather than in the abstract.
+- **Task ordering.** Categories have explicit order; `Task.order` exists and no
+  command touches it. Whether that becomes a feature or gets deleted is part
+  of #56, and #51 is the natural moment to answer it, since defining `list`'s
+  sort order forces the question.

@@ -166,6 +166,17 @@ Three parallel branches, each squash-merged as one conventional commit.
   are gone. Positions are 1-based — see the Uncategorized invariant above for
   why 0 is not available.
 
+## Roadmap
+
+`docs/ROADMAP.md` is the plan past phase 1: release engineering first, then
+due dates, then a command a scheduler can call, plus the rough edges found
+reviewing the tree against the README. Issue #43 tracks it and carries the
+same list as sub-issues.
+
+Read it before scoping new work. Several items are ordered behind decisions
+nobody has made yet — building them in the wrong order means encoding a guess
+about date formats or display timezones into four places at once.
+
 ## Rough edges and session cost
 
 `docs/WORKING-NOTES.md` covers what this file deliberately leaves out: build
