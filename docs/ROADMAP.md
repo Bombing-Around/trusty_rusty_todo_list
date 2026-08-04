@@ -91,7 +91,11 @@ behind it.
 | --- | --- |
 | #54 | `list` ignores the category context and cannot be scoped to a category, while every other task command honours it. |
 | #55 | `description` is persisted on tasks and categories, threaded through the manager APIs, and can never be set. |
-| #56 | Eighteen blanket `#[allow(dead_code)]` markers, hiding at least four pieces of genuinely unreachable surface. |
+| ~~#56~~ | **Landed.** Eighteen blanket `#[allow(dead_code)]` markers removed, and the fourteen unreachable items behind them deleted. `src/` now has none; keep it that way — a blanket marker on an `impl` block is how the previous fourteen went unnoticed. |
+
+#56 shifted #54 slightly: the two unused storage combinators it cited as
+evidence are gone, so `list --category` starts from a smaller surface rather
+than an existing-but-unused one.
 
 ## Standing backlog
 
@@ -108,6 +112,7 @@ this roadmap and are not duplicated into it. #20's backend-parity bullet and
   with soft deletion and completion in ways worth designing against real
   due-date usage rather than in the abstract.
 - **Task ordering.** Categories have explicit order; `Task.order` exists and no
-  command touches it. Whether that becomes a feature or gets deleted is part
-  of #56, and #51 is the natural moment to answer it, since defining `list`'s
-  sort order forces the question.
+  command touches it. #56 kept the field deliberately — dropping it is a schema
+  change to remove a column that costs nothing — and deleted its unused setter.
+  Whether it becomes a feature is still open, and #51 is the natural moment to
+  answer it, since defining `list`'s sort order forces the question.
