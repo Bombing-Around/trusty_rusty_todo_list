@@ -9,7 +9,6 @@ pub mod sqlite;
 #[cfg(test)]
 pub mod test_utils;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageType {
     Json,
@@ -58,7 +57,6 @@ impl StorageType {
     }
 }
 
-#[allow(dead_code)]
 pub trait Storage {
     fn save(&self, data: &StorageData) -> Result<(), StorageError>;
     fn load(&self) -> Result<StorageData, StorageError>;
@@ -67,12 +65,6 @@ pub trait Storage {
     fn add_task(&self, task: Task) -> Result<(), StorageError> {
         let mut data = self.load()?;
         data.tasks.push(task);
-        self.save(&data)
-    }
-
-    fn delete_task(&self, task_id: u64) -> Result<(), StorageError> {
-        let mut data = self.load()?;
-        data.tasks.retain(|t| t.id != task_id);
         self.save(&data)
     }
 
@@ -97,25 +89,6 @@ pub trait Storage {
         Ok(data.tasks.into_iter().find(|t| t.id == task_id))
     }
 
-    fn add_category(&self, category: Category) -> Result<(), StorageError> {
-        let mut data = self.load()?;
-        data.categories.push(category);
-        self.save(&data)
-    }
-
-    fn update_category(&self, category: Category) -> Result<(), StorageError> {
-        let mut data = self.load()?;
-        if let Some(existing_category) = data.categories.iter_mut().find(|c| c.id == category.id) {
-            *existing_category = category;
-            self.save(&data)
-        } else {
-            Err(StorageError::Storage(format!(
-                "Category with id {} not found",
-                category.id
-            )))
-        }
-    }
-
     fn get_category(&self, category_id: u64) -> Result<Option<Category>, StorageError> {
         let data = self.load()?;
         Ok(data.categories.into_iter().find(|c| c.id == category_id))
@@ -129,11 +102,7 @@ pub trait Storage {
     /// their own comments.
     fn live_tasks(&self) -> Result<Vec<Task>, StorageError> {
         let data = self.load()?;
-        Ok(data
-            .tasks
-            .into_iter()
-            .filter(|t| t.deleted_at.is_none())
-            .collect())
+        Ok(data.tasks.into_iter().filter(|t| !t.is_deleted()).collect())
     }
 
     fn get_tasks_by_category(&self, category_id: u64) -> Result<Vec<Task>, StorageError> {
@@ -157,23 +126,6 @@ pub trait Storage {
             .live_tasks()?
             .into_iter()
             .filter(|t| t.completed)
-            .collect())
-    }
-
-    fn get_incomplete_tasks(&self) -> Result<Vec<Task>, StorageError> {
-        Ok(self
-            .live_tasks()?
-            .into_iter()
-            .filter(|t| !t.completed)
-            .collect())
-    }
-
-    fn search_tasks(&self, query: &str) -> Result<Vec<Task>, StorageError> {
-        let query = query.to_lowercase();
-        Ok(self
-            .live_tasks()?
-            .into_iter()
-            .filter(|t| t.title.to_lowercase().contains(&query))
             .collect())
     }
 
@@ -230,10 +182,6 @@ pub trait Storage {
             .find(|c| c.name.to_lowercase() == name))
     }
 
-    fn get_category_id_by_name(&self, name: &str) -> Result<Option<u64>, StorageError> {
-        Ok(self.get_category_by_name(name)?.map(|c| c.id))
-    }
-
     fn move_task_to_category(
         &self,
         task_id: u64,
@@ -252,14 +200,6 @@ pub trait Storage {
         }
     }
 
-    fn get_tasks_by_category_name(&self, category_name: &str) -> Result<Vec<Task>, StorageError> {
-        if let Some(category_id) = self.get_category_id_by_name(category_name)? {
-            self.get_tasks_by_category(category_id)
-        } else {
-            Ok(Vec::new())
-        }
-    }
-
     /// Tasks that have been soft-deleted (`Task::soft_delete`), regardless of
     /// which real category they belong to.
     ///
@@ -273,11 +213,7 @@ pub trait Storage {
     /// no longer be confused with each other.
     fn get_deleted_tasks(&self) -> Result<Vec<Task>, StorageError> {
         let data = self.load()?;
-        Ok(data
-            .tasks
-            .into_iter()
-            .filter(|t| t.deleted_at.is_some())
-            .collect())
+        Ok(data.tasks.into_iter().filter(|t| t.is_deleted()).collect())
     }
 
     fn soft_delete_task(&self, task_id: u64) -> Result<(), StorageError> {
@@ -372,30 +308,6 @@ pub trait Storage {
         self.live_tasks()
     }
 
-    fn get_tasks_by_priority_and_category(
-        &self,
-        priority: Priority,
-        category_id: u64,
-    ) -> Result<Vec<Task>, StorageError> {
-        Ok(self
-            .live_tasks()?
-            .into_iter()
-            .filter(|t| t.priority == priority && t.category_id == category_id)
-            .collect())
-    }
-
-    fn get_tasks_by_completion_and_category(
-        &self,
-        completed: bool,
-        category_id: u64,
-    ) -> Result<Vec<Task>, StorageError> {
-        Ok(self
-            .live_tasks()?
-            .into_iter()
-            .filter(|t| t.completed == completed && t.category_id == category_id)
-            .collect())
-    }
-
     fn get_tasks_by_completion_and_priority(
         &self,
         completed: bool,
@@ -405,21 +317,6 @@ pub trait Storage {
             .live_tasks()?
             .into_iter()
             .filter(|t| t.completed == completed && t.priority == priority)
-            .collect())
-    }
-
-    fn get_tasks_by_completion_priority_and_category(
-        &self,
-        completed: bool,
-        priority: Priority,
-        category_id: u64,
-    ) -> Result<Vec<Task>, StorageError> {
-        Ok(self
-            .live_tasks()?
-            .into_iter()
-            .filter(|t| {
-                t.completed == completed && t.priority == priority && t.category_id == category_id
-            })
             .collect())
     }
 }
@@ -481,7 +378,6 @@ fn is_empty(data: &StorageData) -> bool {
 /// survives the switch. The vestigial `config` blob does not: it belongs to
 /// whichever file it is written in (see `StorageData::new`), so the
 /// destination keeps its own.
-#[allow(dead_code)]
 pub fn migrate_storage(
     source: &dyn Storage,
     destination: &dyn Storage,
@@ -514,7 +410,6 @@ pub fn migrate_storage(
     Ok(MigrationOutcome::Migrated { tasks, categories })
 }
 
-#[allow(dead_code)]
 pub fn create_storage(
     storage_type: StorageType,
     path: &Path,
@@ -926,7 +821,12 @@ mod tests {
         category.id = storage.get_next_category_id().unwrap();
         let category_id = category.id;
         assert_ne!(category_id, 0);
-        storage.add_category(category).unwrap();
+        // Seeded the way `CategoryManager` does it - load, push, save - rather
+        // than through a storage-level `add_category` helper, so this test
+        // exercises the same write path production uses.
+        let mut data = storage.load().unwrap();
+        data.categories.push(category);
+        storage.save(&data).unwrap();
 
         let mut task = Task::new(
             "Finish report".to_string(),
@@ -953,7 +853,14 @@ mod tests {
             .get_tasks_by_category(category_id)
             .unwrap()
             .is_empty());
-        assert!(storage.search_tasks("report").unwrap().is_empty());
+        // `get_tasks_by_title` is what task resolution matches names against,
+        // and `get_all_tasks` is what `list` and its `--search` filter read:
+        // between them, a soft-deleted task is unreachable by name and absent
+        // from every listing.
+        assert!(storage
+            .get_tasks_by_title("Finish report")
+            .unwrap()
+            .is_empty());
         assert!(storage.get_all_tasks().unwrap().is_empty());
 
         // get_task is the one exception: it must still be reachable by ID so
