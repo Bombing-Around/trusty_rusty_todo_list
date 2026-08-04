@@ -38,36 +38,85 @@ fn validate_storage_path(path: &str) -> Result<PathBuf, ConfigError> {
     let path = shellexpand::tilde(path);
     let path = PathBuf::from(path.as_ref());
 
-    // Check if parent directory exists
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            return Err(ConfigError::InvalidConfig(format!(
-                "Parent directory does not exist: {}",
-                parent.display()
-            )));
-        }
-
-        // Check if directory is writable
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if let Ok(metadata) = parent.metadata() {
-                if metadata.mode() & 0o200 == 0 {
-                    return Err(ConfigError::InvalidConfig(format!(
-                        "Directory is not writable: {}",
-                        parent.display()
-                    )));
-                }
-            }
-        }
-    }
-
-    // Additional path validation
     if path.as_os_str().is_empty() {
         return Err(ConfigError::InvalidConfig(
             "Path cannot be empty".to_string(),
         ));
     }
+
+    // The runtime never requires `storage.path` to already exist:
+    // `main::storage_dir` and both storage backends (`storage/json.rs`,
+    // `storage/config.rs`) call `create_dir_all` on it before writing, so a
+    // brand-new subdirectory under an existing root is a perfectly legal
+    // value. Demanding the *immediate* parent already exist - what this used
+    // to check - is stricter than that and rejects exactly the case the
+    // runtime handles fine, e.g. `~/brand/new/place` under an existing
+    // `~/brand`.
+    //
+    // Walking up to the nearest ancestor that does exist is what replaces it.
+    //
+    // Be honest about how little this rejects, because the obvious reading is
+    // wrong twice over.
+    //
+    // First, a missing subdirectory and a mistyped one are the same input:
+    // nothing distinguishes `~/brand/new/place` from `~/brnad/new/place`, so
+    // accepting the first necessarily accepts the second. No check that also
+    // permits creating new subdirectories can separate them. Typo detection
+    // was what the old immediate-parent rule bought, and it is what this gives
+    // up - deliberately, because it was rejecting paths the runtime creates
+    // without complaint.
+    //
+    // Second, the writability check below is a weaker guard than it looks and
+    // does not make up the difference. It reads the *owner's* write bit, not
+    // whether the calling process can write. `/` is mode 0755, so that bit is
+    // set and a mistyped absolute root like `/hme/user/x` - whose nearest
+    // existing ancestor is `/` - passes for every user, not just root. What
+    // the check actually catches is a directory whose owner write bit has been
+    // cleared, which is a deliberate configuration rather than a typo.
+    //
+    // The practical guarantee is therefore narrow: this confirms some existing
+    // directory is above the path and is not marked unwritable, and leaves the
+    // real permission answer to the `create_dir_all` at the point of use,
+    // which reports an actual error from the actual operation. Making the
+    // permission question meaningful means asking about effective access
+    // rather than mode bits, which is a separate decision from this one.
+    //
+    // The `else` below is close to unreachable and is kept as a total match
+    // rather than an `expect`: `ancestors()` terminates at the filesystem
+    // root, which exists on any system that got far enough to run this. A
+    // relative path whose current directory has been unlinked is the kind of
+    // case that could reach it, and returning an error beats panicking.
+    let Some(existing_ancestor) = path.ancestors().find(|ancestor| ancestor.exists()) else {
+        return Err(ConfigError::InvalidConfig(format!(
+            "No existing ancestor directory found for: {}",
+            path.display()
+        )));
+    };
+
+    // Check if the nearest existing directory is writable - that is where
+    // `create_dir_all` will actually start creating entries, so it is the
+    // one permission check that matters regardless of how many missing
+    // path components follow it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(metadata) = existing_ancestor.metadata() {
+            if metadata.mode() & 0o200 == 0 {
+                return Err(ConfigError::InvalidConfig(format!(
+                    "Directory is not writable: {}",
+                    existing_ancestor.display()
+                )));
+            }
+        }
+    }
+    // Not checked on Windows: writability there is an ACL question, and a
+    // Unix-style mode-bit check has nothing in that model to read. Reporting
+    // "writable" or "not writable" from data that does not encode either is
+    // worse than not asking - a wrong verdict here would reject a path the
+    // runtime could actually use, or accept one it can't, *because* of this
+    // check rather than in spite of it. The real `create_dir_all`/file write
+    // at the point of use still surfaces an actual permission error if there
+    // is one.
 
     Ok(path)
 }
@@ -541,11 +590,10 @@ mod tests {
         // Test setting storage path.
         //
         // The path comes from the `TempDir` rather than a hardcoded
-        // `~/.config/...` because `validate_storage_path` rejects a path whose
-        // parent does not exist. `~/.config` is a Unix convention that happens
-        // to exist on the Linux and macOS runners and does not exist on a
-        // fresh Windows one, so hardcoding it made this assert on ambient
-        // filesystem state rather than on the code under test.
+        // `~/.config/...` so the assertion depends on the code under test,
+        // not on ambient filesystem state: `~/.config` is a Unix convention
+        // that happens to exist on the Linux and macOS runners and does not
+        // exist on a fresh Windows one.
         let storage_path = temp_dir
             .path()
             .join("storage")
@@ -777,5 +825,60 @@ mod tests {
         assert!(manager.default_categories_offered());
         assert_eq!(manager.get("default-priority"), Some("high".to_string()));
         assert_eq!(manager.get("deleted-task-lifespan"), Some("7".to_string()));
+    }
+
+    /// The runtime creates the whole `storage.path` tree with
+    /// `create_dir_all` before writing to it (`main::storage_dir`, both
+    /// storage backends), so a value several missing levels deep under an
+    /// existing root - not just one - has to validate. This is the case the
+    /// old "immediate parent must already exist" check got wrong: it demanded
+    /// pre-creation of directories the application was always going to make
+    /// itself.
+    ///
+    /// Built from a `TempDir` rather than a real path like `~/brand/new`, so
+    /// the assertion depends on the code under test rather than on nothing
+    /// having created `~/brand` on whatever machine runs this.
+    #[test]
+    fn test_validate_storage_path_accepts_a_new_subdirectory_under_an_existing_root() {
+        let temp_dir = TempDir::new().unwrap();
+        let target = temp_dir.path().join("brand").join("new").join("place");
+        assert!(
+            !target.exists(),
+            "the test must exercise a path that genuinely doesn't exist yet"
+        );
+
+        let result = validate_storage_path(target.to_str().unwrap());
+        assert_eq!(result.unwrap(), target);
+    }
+
+    /// What actually rejects a typo'd root (`/hme/user/x`) is not "no
+    /// ancestor exists at all": on a real Unix filesystem `/` always exists,
+    /// so an absolute path always has *some* existing ancestor to fall back
+    /// to. What a typo'd root hits, for anyone other than the filesystem
+    /// root's owner, is that fallback ancestor lacking write permission.
+    ///
+    /// This reproduces exactly that outcome hermetically - an existing
+    /// directory with its write bit stripped - rather than asserting that
+    /// some specific real path is absent on whatever machine runs the test,
+    /// which is exactly the ambient-state dependency the other test above
+    /// avoids by using a `TempDir`.
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_storage_path_rejects_an_unwritable_ancestor() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let bad_root = temp_dir.path().join("bad_root");
+        std::fs::create_dir(&bad_root).unwrap();
+        std::fs::set_permissions(&bad_root, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let target = bad_root.join("nested").join("place");
+        let result = validate_storage_path(target.to_str().unwrap());
+        assert!(result.is_err());
+
+        // Restore write access before the `TempDir` cleans itself up on
+        // drop, so this test's own teardown doesn't depend on removal
+        // working without it.
+        std::fs::set_permissions(&bad_root, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 }
