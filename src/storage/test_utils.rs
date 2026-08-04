@@ -20,7 +20,7 @@ pub struct TestStorage {
 impl TestStorage {
     pub fn new() -> Self {
         let temp_dir = tempfile::Builder::new()
-            .prefix("trtodo_test")
+            .prefix("trt_test")
             .tempdir()
             .expect("failed to create temporary directory");
 

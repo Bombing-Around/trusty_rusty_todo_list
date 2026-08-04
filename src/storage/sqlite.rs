@@ -134,9 +134,9 @@ impl SqliteStorage {
         if let Some(version) = stored_version {
             if version > SCHEMA_VERSION {
                 return Err(StorageError::Storage(format!(
-                    "this database uses schema version {}, but this build of trtodo only \
+                    "this database uses schema version {}, but this build of trt only \
                      understands up to version {}; it was most likely written by a newer \
-                     version of trtodo. Upgrade trtodo, or point storage.path at a different \
+                     version of trt. Upgrade trt, or point storage.path at a different \
                      directory. The database has not been modified.",
                     version, SCHEMA_VERSION
                 )));
@@ -849,7 +849,7 @@ mod tests {
             "the error should name both the version found and the version supported, got: {message}"
         );
         assert!(
-            message.contains("newer version of trtodo"),
+            message.contains("newer version of trt"),
             "the error should explain *why* this happened, got: {message}"
         );
 

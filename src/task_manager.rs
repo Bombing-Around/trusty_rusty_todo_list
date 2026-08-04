@@ -6,7 +6,7 @@
 //! filtered listing, and the "match by name, prompt if ambiguous" rule (see
 //! `crate::prompter`).
 //!
-//! It also owns the *deleted* side of that world (`trtodo deleted ...`):
+//! It also owns the *deleted* side of that world (`trt deleted ...`):
 //! listing what is soft-deleted, resolving a reference among only those
 //! tasks, restoring one, and flushing them all. Those live here rather than
 //! in a module of their own because they are the same tasks under a
@@ -159,7 +159,7 @@ impl<'a> TaskManager<'a> {
     }
 
     /// Every currently soft-deleted task, oldest deletion first
-    /// (`trtodo deleted list`).
+    /// (`trt deleted list`).
     ///
     /// Sorted by `deleted_at` deliberately: this list doubles as the preview
     /// of what a `flush` would destroy and of what the automatic
@@ -174,7 +174,7 @@ impl<'a> TaskManager<'a> {
     }
 
     /// Resolves a `<title or id>` CLI argument to a single *soft-deleted*
-    /// task, for `trtodo deleted restore`.
+    /// task, for `trt deleted restore`.
     ///
     /// This is the inverse scope of `resolve_task`, and it has to be its own
     /// method rather than a flag on that one: every title/ID lookup helper
@@ -256,7 +256,7 @@ impl<'a> TaskManager<'a> {
     }
 
     /// Permanently removes every currently soft-deleted task, unconditionally
-    /// (`trtodo deleted flush`). See `Storage::purge_all_deleted_tasks` for
+    /// (`trt deleted flush`). See `Storage::purge_all_deleted_tasks` for
     /// why this is a distinct primitive from the automatic,
     /// `deleted-task-lifespan`-gated purge below.
     ///

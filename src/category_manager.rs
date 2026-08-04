@@ -3,7 +3,7 @@
 //! `CategoryManager` sits between the CLI and the `Storage` trait and owns all
 //! category behaviour described in the README: creating/renaming/deleting
 //! categories, the magic "Uncategorized" category (ID 0), custom ordering, and
-//! the category context set by `trtodo category use` which persists between
+//! the category context set by `trt category use` which persists between
 //! runs via `StorageData::current_category`.
 
 use crate::models::{Category, CategoryError, StorageError};

@@ -102,7 +102,7 @@ mod tests {
             config: Config {
                 deleted_task_lifespan: Some(7),
                 storage_type: Some("json".to_string()),
-                storage_path: Some("~/.config/trtodo".to_string()),
+                storage_path: Some("~/.config/trt".to_string()),
                 default_category: Some("work".to_string()),
                 default_priority: Some("medium".to_string()),
                 default_categories_offered: Some(true),
@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(loaded_data.config.storage_type, Some("json".to_string()));
         assert_eq!(
             loaded_data.config.storage_path,
-            Some("~/.config/trtodo".to_string())
+            Some("~/.config/trt".to_string())
         );
         assert_eq!(
             loaded_data.config.default_category,

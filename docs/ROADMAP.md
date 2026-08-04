@@ -33,15 +33,41 @@ expensive the longer there is code depending on the answer.
 
 | Issue | What |
 | --- | --- |
-| #45 | Package metadata and an MSRV. The manifest is still the `cargo new` default plus dependencies, and the supported Rust version is "whatever stable was when CI last ran". |
-| #46 | CI beyond `ubuntu-latest`. Nothing has ever built or run on macOS or Windows, and the README documents a Windows config path. |
-| #47 | `tempfile` is a normal dependency but only used under `#[cfg(test)]`. |
+| ~~#45~~ | **Landed.** Package metadata, `license = "GPL-3.0-only"` matching the tree, and `rust-version = "1.78"` — the floor the suite is verified against, with a CI job that keeps it true. Left publishable, with `cargo publish --dry-run` in CI. |
+| ~~#46~~ | **Landed.** `test` is a matrix across Linux, macOS, and Windows; `fmt`/`clippy` split into a job that runs once. Dependabot enabled, monthly and grouped. |
+| ~~#47~~ | **Landed.** `tempfile` is a dev-dependency only. |
 | #44 | The release workflow itself: tag-triggered cross-platform binaries, checksums, generated notes, a real install section. |
-| #48 | The documented test count is an invariant nothing enforces, and two documents already disagree about it. |
+| ~~#48~~ | **Landed.** CI derives and prints per-binary and total test counts; the hand-maintained number is gone from the working notes. |
 
 #44 comes last of these on purpose: building binaries for platforms the suite
 has never run on, from a manifest that does not say what license they are
-under, is publishing guesses.
+under, is publishing guesses. Its prerequisites are now all in place — what it
+is waiting on is a decision about what a release contains, not more groundwork.
+
+Two things the release-engineering pass settled that are worth not
+re-litigating:
+
+- **The MSRV floor is 1.78 because of the lockfile, not the dependencies.**
+  The highest floor any dependency declares is clap's 1.70, and it is
+  unreachable: the committed `Cargo.lock` is lockfile v4, which no Cargo
+  before 1.78 can parse. Lowering the floor means regenerating the lockfile
+  in the older format, which is a deliberate choice and not a free one.
+- **The test count is reported, never enforced.** A hard failure on a
+  decreasing count also fires on legitimate consolidation, and a check people
+  learn to override is worse than no check. The direction of the number is the
+  signal.
+- **The crate is kept publishable, and CI packages it on every run.** crates.io
+  is a possible destination rather than a settled one; `publish = false` would
+  have blocked the dry run too, letting the manifest rot unpublishable with
+  nothing to report it. One thing is still open and gets more expensive after
+  a first publish, not less: the package name (`trusty_rusty_todo_list`) and
+  the binary name (`trt`) differ, so installing would be
+  `cargo install trusty_rusty_todo_list` to get a `trt`. They cannot be made
+  to match by renaming the package — `trt` on crates.io belongs to an
+  unrelated tokio runtime library. That crate ships no executable, so there is
+  no PATH collision; the clash is only over the crates.io namespace.
+  `trusty_rusty_todo_list` was unregistered when this was written, and saying
+  so reserves nothing — publishing is the only thing that holds a name.
 
 ## Phase 2 — dates and times
 

@@ -48,18 +48,20 @@ jobs:
         fi
         echo "PR title OK: $PR_TITLE"
 
-  test:
-    name: Test
+  # fmt and clippy are platform-independent, so they run once rather than
+  # once per matrix leg - three identical results buy nothing but minutes.
+  lint:
+    name: Format and lint
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    
+    - uses: actions/checkout@v4
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt, clippy
         toolchain: stable
-    
+
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
       with:
@@ -73,8 +75,130 @@ jobs:
     - name: Check formatting
       run: cargo fmt --all -- --check
 
+    # Stricter than a bare `cargo clippy`: a clean bare run proves nothing
+    # about whether this passes.
     - name: Clippy
       run: cargo clippy -- -D warnings
 
+    # crates.io is a possible destination, so the manifest is kept publishable
+    # and this is what keeps it that way. Packaging catches the failures that
+    # inspection does not: a missing required field, an invalid category slug,
+    # a file the package needs but .gitignore excludes, or a source tree that
+    # only builds because of something untracked sitting in the working copy.
+    # None of those are visible until something actually packages the crate.
+    - name: Check the crate still packages
+      run: cargo publish --dry-run
+
+  # The declared floor in Cargo.toml, exercised. Without this the rust-version
+  # field is a claim rather than a fact, and a dependency bump can raise the
+  # real floor with nothing to notice - which is the state this replaced.
+  # Pinned to an exact version on purpose: "the oldest supported" is not a
+  # thing rustup can resolve, so it has to be spelled out in both places and
+  # changed deliberately in both.
+  msrv:
+    name: Minimum supported Rust version
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: "1.78"
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: rust-cargo-msrv-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        shared-key: rust-cargo-msrv-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+        save-if: ${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+        workspaces: "**/Cargo.toml"
+        cache-targets: true
+        cache-on-failure: true
+
+    # The whole suite, not just a build. A floor that compiles but fails its
+    # tests is not a supported version.
     - name: Run tests
-      run: cargo test --verbose 
+      run: cargo test
+
+  # The README promises a Windows config path and `dirs` is what resolves it,
+  # the integration harness builds real temp directories, and StdinPrompter's
+  # "is stdin a terminal" check is not the same call on every platform. None
+  # of that is platform-neutral by accident, so all three are exercised.
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Finish the other platforms rather than cancelling them: when a failure
+      # is platform-specific, knowing which platforms are unaffected is most of
+      # the diagnosis.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: rust-cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        shared-key: rust-cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+        save-if: ${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+        workspaces: "**/Cargo.toml"
+        cache-targets: true
+        cache-on-failure: true
+
+    # --no-fail-fast because this is the matrix job. cargo stops at the first
+    # failing test binary, so a platform that breaks several of them reveals
+    # one per CI round trip, and each round trip is a push and a full rebuild
+    # on three runners. Surfacing every failure in one run is the difference
+    # between one fix and a queue of them.
+    - name: Run tests
+      run: cargo test --verbose --no-fail-fast
+
+    # A raw test count is this project's cheapest tripwire for its known
+    # failure mode: a test deleted rather than a bug fixed. Reported, not
+    # enforced - a hard failure on a decreasing count would also fire on
+    # legitimate consolidation, which just teaches people to override it.
+    # The direction of the number is the signal; this is not a coverage
+    # target, which the working notes reject explicitly.
+    #
+    # Counted by asking each test harness for its own list rather than by
+    # parsing `cargo test` output: cargo writes the "Running <binary>"
+    # headers to stderr and each harness writes its "test result" line to
+    # stdout, so merging the two streams to pair a name with a count relies
+    # on interleaving that buffering does not guarantee.
+    #
+    # One leg only: the same tests are compiled everywhere, so the count is
+    # the same everywhere, and reporting it three times would only invite
+    # reading a difference into it. Linux is also the leg where this parses
+    # cleanly - the harness emits CRLF on Windows, which a `': test$'` match
+    # would silently miss.
+    - name: Report test counts
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -uo pipefail
+        total=0
+        rows=""
+        while read -r name exe; do
+          n=$("$exe" --list 2>/dev/null | grep -c ': test$' || true)
+          rows+="| \`$name\` | $n |"$'\n'
+          total=$((total + n))
+        done < <(cargo test --no-run --message-format=json 2>/dev/null \
+          | jq -r 'select(.executable != null and .profile.test == true)
+                   | "\(.target.name) \(.executable)"' \
+          | sort)
+        {
+          echo "### Test counts"
+          echo
+          echo "| Test binary | Tests |"
+          echo "| --- | --- |"
+          printf '%s' "$rows"
+          echo "| **Total** | **$total** |"
+        } | tee -a "$GITHUB_STEP_SUMMARY"

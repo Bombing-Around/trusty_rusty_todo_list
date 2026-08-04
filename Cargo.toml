@@ -2,11 +2,56 @@
 name = "trusty_rusty_todo_list"
 version = "0.1.0"
 edition = "2021"
+description = "A CLI todo list with categories, priorities, and JSON or SQLite storage"
+# Matches the GPL-3.0 text in LICENSE, which the manifest previously did not
+# reference at all. "-only" rather than "-or-later": the file carries the bare
+# licence text without the "or (at your option) any later version" statement,
+# and that permission has to be granted explicitly rather than assumed.
+license = "GPL-3.0-only"
+repository = "https://github.com/Bombing-Around/trusty_rusty_todo_list"
+readme = "README.md"
+keywords = ["todo", "cli", "tasks", "productivity"]
+categories = ["command-line-utilities"]
+
+# The floor the suite is actually verified against, not the highest version any
+# dependency happens to declare. clap 4.4 asks for 1.70, but the committed
+# Cargo.lock is lockfile v4, which no Cargo before 1.78 can parse - so 1.70 was
+# never reachable no matter what the dependency graph said. The full suite is
+# run against this version in CI so the number stays true instead of drifting
+# into another claim nobody checks.
+rust-version = "1.78"
+
+# Deliberately left publishable rather than set to `publish = false`.
+#
+# crates.io is a possible destination, so the manifest is kept in a state where
+# `cargo publish` would succeed - description, license, repository, keywords,
+# and categories are all present and valid, and `cargo publish --dry-run` is
+# what verifies that rather than inspection. The cost of the other choice is
+# not the one line it takes to flip: `publish = false` also blocks the dry run,
+# so the manifest would rot unpublishable without anything reporting it.
+#
+# `trusty_rusty_todo_list` was unregistered when this was written, and saying
+# so reserves nothing - crates.io has no mechanism for holding a name short of
+# publishing to it.
+#
+# The package name and the binary name differ on purpose, and the difference is
+# not free: installing this is `cargo install trusty_rusty_todo_list` to get a
+# `trt` on your PATH. `trt` is not available as a package name - it belongs to
+# an unrelated tokio runtime crate - so the two cannot be made to match by
+# renaming the package to the binary. That crate is a library and ships no
+# executable, so nothing it installs can collide with this one; the collision
+# is only over the crates.io namespace.
+#
+# The binary name is the constraint that actually bites, because it is what
+# lands on a stranger's PATH. `tr` was considered and rejected: it is
+# POSIX-specified and ships in coreutils, so shadowing it would break shell
+# scripts anywhere this sorted earlier on PATH, in ways that surface far from
+# the cause.
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bin]]
-name = "trtodo"
+name = "trt"
 path = "src/main.rs"
 
 [dependencies]
@@ -15,7 +60,6 @@ serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.107"
 thiserror = "1.0.49"
 chrono = { version = "0.4.31", features = ["serde"] }
-tempfile = "3.8.1"
 rusqlite = { version = "0.30.0", features = ["bundled", "chrono"] }
 dirs = "5.0.1"
 shellexpand = "3.1.0"

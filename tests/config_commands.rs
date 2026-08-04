@@ -1,27 +1,27 @@
-//! End-to-end coverage of `trtodo config ...`, pinning down that declared
+//! End-to-end coverage of `trt config ...`, pinning down that declared
 //! config defaults are actually applied.
 //!
 //! Every invocation is pointed at a `--config` file inside a `TempDir`, and
 //! `$HOME` is pointed at a path that doesn't exist, so the real
-//! `~/.config/trtodo` and the developer's actual config/todo data are never
+//! `~/.config/trt` and the developer's actual config/todo data are never
 //! read or written.
 
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
-struct Trtodo {
+struct Trt {
     _dir: TempDir,
     config_path: std::path::PathBuf,
 }
 
-impl Trtodo {
+impl Trt {
     /// A fresh instance with no config file yet - this is the "clean $HOME"
     /// scenario the issue is about, so unlike `category_commands.rs` this
     /// constructor deliberately does *not* seed any config.
     fn new() -> Self {
         let dir = TempDir::new().unwrap();
-        let config_path = dir.path().join("trtodo-config.json");
+        let config_path = dir.path().join("trt-config.json");
         Self {
             config_path,
             _dir: dir,
@@ -29,21 +29,21 @@ impl Trtodo {
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_trtodo"))
+        Command::new(env!("CARGO_BIN_EXE_trt"))
             .arg("--config")
             .arg(&self.config_path)
             // Make sure nothing can silently fall back to a real home directory.
             .env("HOME", self.home_guard())
             .args(args)
             .output()
-            .expect("failed to run trtodo")
+            .expect("failed to run trt")
     }
 
     /// A path that does not exist: if any code path tries to use `$HOME`
     /// instead of the configured storage location, the test fails loudly
     /// instead of touching the developer's real config.
     fn home_guard(&self) -> &Path {
-        Path::new("/nonexistent-trtodo-test-home")
+        Path::new("/nonexistent-trt-test-home")
     }
 
     fn ok(&self, args: &[&str]) -> String {
@@ -85,13 +85,13 @@ fn find<'a>(entries: &'a [(String, String, bool)], key: &str) -> &'a (String, St
 /// primary regression test for defaults being declared but never applied.
 #[test]
 fn fresh_install_reports_documented_defaults() {
-    let trtodo = Trtodo::new();
+    let trt = Trt::new();
     assert!(
-        !trtodo.config_path.exists(),
+        !trt.config_path.exists(),
         "test setup should not have created a config file"
     );
 
-    let out = trtodo.ok(&["config", "list"]);
+    let out = trt.ok(&["config", "list"]);
     let entries = parse_list(&out);
     assert_eq!(entries.len(), 5, "{out}");
 
@@ -105,9 +105,15 @@ fn fresh_install_reports_documented_defaults() {
     );
     let (_, storage_path, is_default) = find(&entries, "storage.path");
     assert!(*is_default, "{out}");
+    // Compared as path components rather than as a string suffix. The value is
+    // rendered with the platform's separator, so a literal "/.config/trt"
+    // asserts the separator as much as the path and fails on Windows against a
+    // perfectly correct `C:\Users\...\.config\trt`. `Path::ends_with` matches
+    // whole components and is separator-agnostic.
+    let expected_tail = Path::new(".config").join("trt");
     assert!(
-        storage_path.ends_with("/.config/trtodo"),
-        "expected an expanded ~/.config/trtodo path, got {storage_path}"
+        Path::new(storage_path).ends_with(&expected_tail),
+        "expected an expanded ~/.config/trt path, got {storage_path}"
     );
     assert_eq!(
         find(&entries, "default-category"),
@@ -127,12 +133,12 @@ fn fresh_install_reports_documented_defaults() {
 /// (holding a literal `null`) rather than absent.
 #[test]
 fn set_one_key_leaves_others_reporting_their_defaults() {
-    let trtodo = Trtodo::new();
+    let trt = Trt::new();
 
-    trtodo.ok(&["config", "set", "default-priority=high"]);
-    assert!(trtodo.config_path.exists());
+    trt.ok(&["config", "set", "default-priority=high"]);
+    assert!(trt.config_path.exists());
 
-    let out = trtodo.ok(&["config", "list"]);
+    let out = trt.ok(&["config", "list"]);
     let entries = parse_list(&out);
 
     // The key we set shows its value, without the `*`.
@@ -160,17 +166,17 @@ fn set_one_key_leaves_others_reporting_their_defaults() {
 /// `config default <key>` must restore the documented default, not `null`.
 #[test]
 fn config_default_restores_documented_default() {
-    let trtodo = Trtodo::new();
+    let trt = Trt::new();
 
-    trtodo.ok(&["config", "set", "default-priority=high"]);
-    let out = trtodo.ok(&["config", "list"]);
+    trt.ok(&["config", "set", "default-priority=high"]);
+    let out = trt.ok(&["config", "list"]);
     assert_eq!(
         find(&parse_list(&out), "default-priority"),
         &("default-priority".to_string(), "high".to_string(), false)
     );
 
-    trtodo.ok(&["config", "default", "default-priority"]);
-    let out = trtodo.ok(&["config", "list"]);
+    trt.ok(&["config", "default", "default-priority"]);
+    let out = trt.ok(&["config", "list"]);
     assert_eq!(
         find(&parse_list(&out), "default-priority"),
         &("default-priority".to_string(), "medium".to_string(), true)

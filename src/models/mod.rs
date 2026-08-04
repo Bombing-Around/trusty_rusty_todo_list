@@ -81,14 +81,14 @@ impl Task {
     /// Un-deletes the task. Because `soft_delete` never touched
     /// `category_id`, this is all a restore takes - the task goes straight
     /// back where it came from. Reachable from the CLI as
-    /// `trtodo deleted restore <title or id>`.
+    /// `trt deleted restore <title or id>`.
     pub fn restore(&mut self) {
         self.deleted_at = None;
         self.updated_at = Utc::now();
     }
 
     /// The deletion timestamp rendered for humans: the "deleted" column of
-    /// `trtodo deleted list`, the flush preview, and the restore
+    /// `trt deleted list`, the flush preview, and the restore
     /// disambiguation prompt all share this one format so the same task
     /// looks the same wherever it is shown.
     ///
@@ -246,7 +246,7 @@ impl StorageData {
             tasks: Vec::new(),
             categories: Vec::new(),
             // The `config` field embedded in the task-data file is
-            // vestigial - the real config lives in `trtodo-config.json` via
+            // vestigial - the real config lives in `trt-config.json` via
             // `ConfigStorage`. `Config::unset()` (nothing stored) is the
             // honest value here; resolving it to the documented defaults
             // would make this file start carrying a populated config blob

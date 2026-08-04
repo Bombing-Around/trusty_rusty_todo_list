@@ -1,7 +1,7 @@
 # trusty_rusty_todo_list
 
-A CLI todo list in Rust. Binary name is `trtodo`. Tasks belong to categories;
-configuration and data live under `~/.config/trtodo` by default.
+A CLI todo list in Rust. Binary name is `trt`. Tasks belong to categories;
+configuration and data live under `~/.config/trt` by default.
 
 `README.md` is the specification, not just documentation. Where behavior and
 README disagree, that is a bug in one of them — decide which, and fix that one.
@@ -79,7 +79,7 @@ them; `get_deleted_tasks()` returns them. `list`/`search` must go through
 `live_tasks()`.
 
 **Each storage backend owns its own file** inside the `storage.path` *directory*
-(`trtodo-data.json`, `trtodo-data.db`). They must never point at the same path.
+(`trt-data.json`, `trt-data.db`). They must never point at the same path.
 Changing `storage.type` migrates data via `migrate_storage`, which only ever
 reads the source and refuses to overwrite a non-empty destination.
 
