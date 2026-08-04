@@ -1,7 +1,8 @@
 # trusty_rusty_todo_list
 
 A CLI todo list in Rust. Binary name is `trt`. Tasks belong to categories;
-configuration and data live under `~/.config/trt` by default.
+configuration and data live under the platform's configuration directory by
+default: `~/.config/trt` on Linux and macOS, `%APPDATA%\trt` on Windows.
 
 `README.md` is the specification, not just documentation. Where behavior and
 README disagree, that is a bug in one of them — decide which, and fix that one.

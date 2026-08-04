@@ -39,8 +39,12 @@ pub enum CliError {
     MalformedKeyValue(String),
     #[error("unknown storage.type '{0}': expected one of json, sqlite")]
     UnknownStorageType(String),
-    #[error("could not determine the home directory; set storage.path explicitly")]
-    NoHomeDirectory,
+    /// Not "no home directory": the directory the defaults hang off is the
+    /// platform's config directory, which is the home directory only on Unix
+    /// (see `config::config_root`), so naming `$HOME` would send a Windows
+    /// user looking in the wrong place.
+    #[error("could not determine the configuration directory; set storage.path explicitly")]
+    NoConfigDirectory,
     /// README: category context lets commands "omit the --category
     /// argument" - but only once one has actually been set via `category
     /// use`. `CheckAll`/`UncheckAll` and the simple `move` syntax have no
@@ -295,9 +299,9 @@ fn offer_default_categories(
 
 /// Builds the task storage backend described by the current configuration.
 ///
-/// `storage.path` is the storage *location* (a directory, per the README's
-/// `~/.config/trt` default); the data file inside it is named after the
-/// chosen backend.
+/// `storage.path` is the storage *location* (a directory, defaulting to the
+/// platform config root the README documents - see `config::config_root`);
+/// the data file inside it is named after the chosen backend.
 ///
 /// Also sweeps up anything overdue for automatic purging under
 /// `deleted-task-lifespan` before handing the storage back. This
@@ -330,13 +334,15 @@ fn configured_storage_type(config_manager: &ConfigManager) -> Result<StorageType
 
 /// The `storage.path` *directory* every backend keeps its data file in. See
 /// `StorageType::data_file_name` for why the file name varies by backend.
+///
+/// The fallback goes through `config::config_root` rather than assembling a
+/// path of its own: the default location is platform-dependent (see that
+/// function), and a second, independent spelling of it is how the Unix-only
+/// shape survived in three places at once.
 fn storage_dir(config_manager: &ConfigManager) -> Result<PathBuf, CliError> {
     match config_manager.get("storage.path") {
         Some(path) => Ok(PathBuf::from(shellexpand::tilde(&path).as_ref())),
-        None => Ok(dirs::home_dir()
-            .ok_or(CliError::NoHomeDirectory)?
-            .join(".config")
-            .join("trt")),
+        None => config::config_root().ok_or(CliError::NoConfigDirectory),
     }
 }
 

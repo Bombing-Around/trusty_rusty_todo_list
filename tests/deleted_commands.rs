@@ -66,13 +66,16 @@ impl Trt {
 
     /// The exact path `open_storage` would create task data under if it ever
     /// fell back to `$HOME` instead of the configured `storage.path`
-    /// (`main::open_storage`: `$HOME/.config/trt`). Asserting on this
-    /// precise, app-owned subpath - rather than on `home_guard()` itself -
-    /// is deliberate: some environments (e.g. a CI sandbox) may already have
-    /// unrelated content sitting at the guard root for reasons outside this
-    /// codebase's control, which would make "the guard root doesn't exist"
-    /// a false failure. What actually matters, and what this proves, is
-    /// that trt itself never wrote anything there.
+    /// (`config::config_root`: `$HOME/.config/trt` on the platforms whose
+    /// default hangs off `$HOME` at all - on Windows it hangs off the roaming
+    /// `AppData` directory instead, which no environment variable set here
+    /// can redirect, so there the guard is simply never reached). Asserting
+    /// on this precise, app-owned subpath - rather than on `home_guard()`
+    /// itself - is deliberate: some environments (e.g. a CI sandbox) may
+    /// already have unrelated content sitting at the guard root for reasons
+    /// outside this codebase's control, which would make "the guard root
+    /// doesn't exist" a false failure. What actually matters, and what this
+    /// proves, is that trt itself never wrote anything there.
     fn app_home_marker(&self) -> std::path::PathBuf {
         self.home_guard().join(".config").join("trt")
     }

@@ -105,15 +105,28 @@ fn fresh_install_reports_documented_defaults() {
     );
     let (_, storage_path, is_default) = find(&entries, "storage.path");
     assert!(*is_default, "{out}");
-    // Compared as path components rather than as a string suffix. The value is
-    // rendered with the platform's separator, so a literal "/.config/trt"
-    // asserts the separator as much as the path and fails on Windows against a
-    // perfectly correct `C:\Users\...\.config\trt`. `Path::ends_with` matches
-    // whole components and is separator-agnostic.
-    let expected_tail = Path::new(".config").join("trt");
-    assert!(
-        Path::new(storage_path).ends_with(&expected_tail),
-        "expected an expanded ~/.config/trt path, got {storage_path}"
+    // The expected root is platform-dependent - the README documents
+    // `~/.config` on Unix and `AppData\Roaming` on Windows - so it is derived
+    // from the same `dirs` lookup the binary makes instead of being written
+    // out. Comparing `Path`s rather than strings also keeps the assertion off
+    // the platform's separator: a literal `"/.config/trt"` suffix asserts
+    // the separator as much as the path, and fails on Windows against a
+    // perfectly correct `...\AppData\Roaming\trt`.
+    let expected_storage_path = if cfg!(windows) {
+        // `HOME` doesn't steer `dirs` on Windows, so the child process
+        // resolves the same roaming `AppData` directory this test does.
+        dirs::config_dir().expect("no roaming AppData directory")
+    } else {
+        // `dirs::home_dir()` reads `$HOME` on Unix and `run` points that at
+        // `home_guard()`, so the child's default is fully determined here -
+        // no ambient home directory takes part in the comparison.
+        trt.home_guard().join(".config")
+    }
+    .join("trt");
+    assert_eq!(
+        Path::new(storage_path),
+        expected_storage_path,
+        "unexpected default storage.path in {out}"
     );
     assert_eq!(
         find(&entries, "default-category"),
