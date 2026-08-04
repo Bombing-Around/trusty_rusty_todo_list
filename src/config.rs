@@ -243,17 +243,60 @@ fn default_storage_type() -> Option<String> {
     Some("json".to_string())
 }
 
-/// Degrades to `None` (rather than panicking) when the home directory can't
-/// be determined, e.g. in a test/CI environment with `$HOME` pointed at a
-/// nonexistent path. `Config::default()` is now reachable from many more
-/// places than before this fix, so a panic here would be much easier to hit.
+/// The directory this application keeps its own files in: the config file,
+/// and - unless `storage.path` says otherwise - the task data beside it.
+///
+/// The location is platform-conditional because the README, which is this
+/// project's specification, documents two of them: `~/.config/trt` on Unix
+/// and `C:\Users\<username>\AppData\Roaming\trt` on Windows. Three places
+/// spelled the Unix shape out unconditionally instead (the two below, plus
+/// `main::storage_dir`), which was wrong on Windows twice over. It is not
+/// where a Windows user expects an application's files to be, and `~/.config`
+/// does not exist on a fresh Windows profile - so the *default* storage path
+/// was one `validate_storage_path` would refuse, since it rejects any path
+/// whose parent directory is missing. A default the validator rejects is a
+/// bug on its own, whatever anyone thinks of the location.
+///
+/// Deliberately not `dirs::config_dir()` unconditionally, which would be
+/// shorter and would need no `cfg` at all: on macOS that resolves to
+/// `~/Library/Application Support`, which the README does not claim and which
+/// is not where command-line tools on macOS conventionally keep their files,
+/// and on Linux it follows `$XDG_CONFIG_HOME` when that is set, so the
+/// default would stop being the literal `~/.config/trt` the README
+/// documents. Silently relocating existing installs to buy one less branch is
+/// the worse trade.
+pub fn config_root() -> Option<PathBuf> {
+    // `dirs::config_dir()` is `{FOLDERID_RoamingAppData}` on Windows - the
+    // `AppData\Roaming` the README names - and Windows creates it for every
+    // user profile, so this default's parent exists and the validator accepts
+    // it.
+    #[cfg(windows)]
+    {
+        dirs::config_dir().map(|config_dir| config_dir.join("trt"))
+    }
+    // `~/.config` on Linux *and* macOS, built from the home directory rather
+    // than taken from `dirs::config_dir()` - the two coincide only on a Linux
+    // box with no `$XDG_CONFIG_HOME` set, per the reasoning above.
+    #[cfg(not(windows))]
+    {
+        dirs::home_dir().map(|home| home.join(".config").join("trt"))
+    }
+}
+
+/// Where `trt-config.json` lives when `--config` (or `TRT_CONFIG`)
+/// doesn't say otherwise: inside `config_root()`, so a default install keeps
+/// its configuration in the same directory as its data.
+fn default_config_file_path() -> Option<PathBuf> {
+    config_root().map(|root| root.join("trt-config.json"))
+}
+
+/// Degrades to `None` (rather than panicking) when the platform's config
+/// directory can't be determined, e.g. in a test/CI environment with `$HOME`
+/// pointed at a nonexistent path. `Config::default()` is now reachable from
+/// many more places than before this fix, so a panic here would be much
+/// easier to hit.
 fn default_storage_path() -> Option<String> {
-    dirs::home_dir().map(|home| {
-        home.join(".config")
-            .join("trt")
-            .to_string_lossy()
-            .to_string()
-    })
+    config_root().map(|root| root.to_string_lossy().to_string())
 }
 
 fn default_priority() -> Option<String> {
@@ -269,8 +312,13 @@ impl ConfigManager {
         let config_path = if let Some(path) = config_path {
             path.to_path_buf()
         } else {
-            let home = dirs::home_dir().expect("Could not determine home directory");
-            home.join(".config").join("trt").join("trt-config.json")
+            // Still a panic here, where `default_storage_path` returns `None`
+            // instead: with no `--config` and no config directory there is no
+            // file to open and nothing to degrade to, whereas a missing
+            // *storage* default is only one link in a fallback chain. This is
+            // also the single startup path, run once, rather than something
+            // `Config::default()` can reach from anywhere.
+            default_config_file_path().expect("Could not determine the configuration directory")
         };
 
         let storage =
@@ -492,7 +540,7 @@ mod tests {
 
         // Test setting storage path.
         //
-        // The path comes from the TempDir rather than a hardcoded
+        // The path comes from the `TempDir` rather than a hardcoded
         // `~/.config/...` because `validate_storage_path` rejects a path whose
         // parent does not exist. `~/.config` is a Unix convention that happens
         // to exist on the Linux and macOS runners and does not exist on a
@@ -624,6 +672,45 @@ mod tests {
         assert_eq!(unset.storage_path, None);
         assert_eq!(unset.default_category, None);
         assert_eq!(unset.default_priority, None);
+    }
+
+    /// The default storage location is the platform root the README
+    /// documents: `~/.config` on Unix, the roaming `AppData` directory on
+    /// Windows. The expected value is derived from the same `dirs` lookups
+    /// rather than written out as a literal, so this holds on all three
+    /// platforms without pinning a separator or depending on any particular
+    /// directory existing.
+    #[test]
+    fn test_default_storage_path_uses_the_documented_platform_root() {
+        let expected = if cfg!(windows) {
+            dirs::config_dir()
+        } else {
+            dirs::home_dir().map(|home| home.join(".config"))
+        }
+        .map(|root| root.join("trt"));
+
+        assert_eq!(default_storage_path().map(PathBuf::from), expected);
+    }
+
+    /// The config file and the default storage directory have to come from
+    /// one root. They used to be assembled separately, each with its own
+    /// hardcoded `.config`, which is what let a platform be got wrong in one
+    /// place without the other - and, in the event, wrong in both.
+    #[test]
+    fn test_the_config_file_lives_in_the_default_storage_directory() {
+        let storage_root = default_storage_path()
+            .map(PathBuf::from)
+            .expect("no platform configuration directory");
+        let config_file = default_config_file_path().expect("no platform configuration directory");
+
+        assert_eq!(config_file.parent(), Some(storage_root.as_path()));
+        // Compared as a whole component (`file_name`) rather than as a string
+        // suffix, so the assertion says nothing about the separator in front
+        // of it.
+        assert_eq!(
+            config_file.file_name(),
+            Some(std::ffi::OsStr::new("trt-config.json"))
+        );
     }
 
     /// A fresh config (nothing stored) must report the first-run

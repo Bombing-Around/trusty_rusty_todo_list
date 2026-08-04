@@ -55,7 +55,7 @@ The binary named `trt` will accept various arguments
 
 ## Additional Behaviors
 
-The first time `trt` is run it should offer to create the default categories of "Home" and "Work" and create a configuration file under `.config\trt\` or `C:\\Users\\<username>\\AppData\\Roaming\trt`.
+The first time `trt` is run it should offer to create the default categories of "Home" and "Work" and create a configuration file in the platform's configuration directory: `~/.config/trt` on Linux and macOS, `C:\Users\<username>\AppData\Roaming\trt` on Windows.
 
 That offer defaults to yes (a bare Enter accepts it) and is made at most once:
 
@@ -89,7 +89,7 @@ The keys below are the configurable ones - they are exactly what `config set`, `
 | ----------------------- | ------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `deleted-task-lifespan` | `0`                | integer<1..?>       | Number of days before task in Deleted category are deleted. A value of 0, the default, indicates they are never automatically deleted |
 | `storage.type`          | `json`             | `json\|sqlite`      | Type of storage backend to use                                                                                                        |
-| `storage.path`          | `~/.config/trt` | string              | Path to storage location                                                                                                              |
+| `storage.path`          | `~/.config/trt` (`%APPDATA%\trt` on Windows) | string              | Path to storage location - the configuration directory named above                                                                     |
 | `default-category`      | `null`             | string              | Category `add` files new tasks into when no `--category` is given and no category context is set. Must name an existing category (by name or ID) - `add` reports an error rather than guessing if it no longer resolves. `category update` carries this setting along when it renames the category it currently names |
 | `default-priority`      | `medium`           | `high\|medium\|low` | Default priority for new tasks                                                                                                        |
 
