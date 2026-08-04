@@ -18,48 +18,48 @@ Finally, I would love to implement some kind of syncing interface to keep your t
 
 ## Interface 
 
-The binary named `trtodo` will accept various arguments
+The binary named `trt` will accept various arguments
 
 | Command                                                                                               | Description                                                                                                                               |
 | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `trtodo add <title> [--category <category_name or category_id> (or -c)] [--priority <high|medium|low>]` | Add a new task with the given title and optional priority. Omitting `--category` uses the current category context, else `default-category`, else Uncategorized |
-| `trtodo delete <title or id> [--category <category_name or category_id> (or -c)]`                     | Delete the task with the given title                                                                                                      |
-| `trtodo update <title or id> --to <new_title> [--category <category_name or category_id> (or -c)]`    | Update the task with the given title                                                                                                      |
-| `trtodo check (x, mark) <title or id> --category <category_name or category_id> (or -c)`              | Check off the task with the given title                                                                                                   |
-| `trtodo uncheck (o, unmark) <title or id> --category <category_name or category_id> (or -c)`          | Uncheck the task with the given title                                                                                                     |
-| `trtodo check all`                                                                                    | Check off all tasks in current category                                                                                                   |
-| `trtodo uncheck all`                                                                                  | Uncheck all tasks in current category                                                                                                     |
-| `trtodo move <task_name or id> --to <category_name or ID>`                                            | Move task to another category (when in category context)                                                                                  |
-| `trtodo move --from <category_name or ID> --to <category_name or ID> --task <task_name or task_id>`   | Move task from one category to another - optionally omitting the `--to` argument will place the task at the parent level (uncategorized)  |
-| `trtodo list [--search <term>] [--completed] [--priority <high|medium|low>]`                          | List all tasks with their IDs, optionally filtered                                                                                        |
-| `trtodo category use <category_name or category_id>`                                                  | Use category for subsequent task interaction                                                                                              |
-| `trtodo category clear`                                                                               | Clear the current category context                                                                                                        |
-| `trtodo category show`                                                                                | Show current category context                                                                                                             |
-| `trtodo category add <name>`                                                                          | Add a new category with the given name                                                                                                    |
-| `trtodo category delete <name> (--new-category <category_name or category_id>)`                       | Delete a category and optionally move its tasks                                                                                           |
-| `trtodo category update <old_name> <new_name>`                                                        | Update an existing category with the given name                                                                                           |
-| `trtodo category list`                                                                                | List all categories with their IDs                                                                                                        |
-| `trtodo category order <category_name or category_id> <position>`                                     | Move a category to the given 1-based position in `category list`                                                                          |
-| `trtodo category reorder <category_name or category_id>...`                                           | Set the order of several categories at once, in the order given                                                                           |
-| `trtodo config set <key=value>`                                                                       | Set configuration key to value                                                                                                            |
-| `trtodo config default <key>`                                                                         | Unsets the value for key to force use of the default value                                                                                |
-| `trtodo config list`                                                                                  | List all configuration keys and their values, including defaults which will be indicated with an asterisk                                 |
-| `trtodo deleted list`                                                                                 | List all soft-deleted tasks with their IDs, titles, original categories, and deletion dates - i.e. exactly what a `flush` would destroy   |
-| `trtodo deleted restore <title or id>`                                                                | Restore a soft-deleted task to its original category. Matches soft-deleted tasks only, prompting if the title is ambiguous                |
-| `trtodo deleted flush [--yes (or -y, --force)]`                                                       | Permanently remove all soft-deleted tasks, listing them and asking for confirmation first. `--yes` skips the prompt                       |
-| `trtodo --help`                                                                                       | List these commands                                                                                                                       |
-| `trtodo --help <command>`                                                                             | Describe command and its arguments                                                                                                        |
-| `trtodo --config <path>`                                                                              | Uses the configuration file at the given path instead of the default. May also be set via the `TRTODO_CONFIG` environment variable; the flag wins  |
-| `trtodo --yes` (or `-y`)                                                                              | Assume "yes" for confirmation prompts and never read from stdin                                                                           |
-| `trtodo --no-input`                                                                                   | Never prompt: decline confirmations and never read from stdin                                                                             |
+| `trt add <title> [--category <category_name or category_id> (or -c)] [--priority <high|medium|low>]` | Add a new task with the given title and optional priority. Omitting `--category` uses the current category context, else `default-category`, else Uncategorized |
+| `trt delete <title or id> [--category <category_name or category_id> (or -c)]`                     | Delete the task with the given title                                                                                                      |
+| `trt update <title or id> --to <new_title> [--category <category_name or category_id> (or -c)]`    | Update the task with the given title                                                                                                      |
+| `trt check (x, mark) <title or id> --category <category_name or category_id> (or -c)`              | Check off the task with the given title                                                                                                   |
+| `trt uncheck (o, unmark) <title or id> --category <category_name or category_id> (or -c)`          | Uncheck the task with the given title                                                                                                     |
+| `trt check all`                                                                                    | Check off all tasks in current category                                                                                                   |
+| `trt uncheck all`                                                                                  | Uncheck all tasks in current category                                                                                                     |
+| `trt move <task_name or id> --to <category_name or ID>`                                            | Move task to another category (when in category context)                                                                                  |
+| `trt move --from <category_name or ID> --to <category_name or ID> --task <task_name or task_id>`   | Move task from one category to another - optionally omitting the `--to` argument will place the task at the parent level (uncategorized)  |
+| `trt list [--search <term>] [--completed] [--priority <high|medium|low>]`                          | List all tasks with their IDs, optionally filtered                                                                                        |
+| `trt category use <category_name or category_id>`                                                  | Use category for subsequent task interaction                                                                                              |
+| `trt category clear`                                                                               | Clear the current category context                                                                                                        |
+| `trt category show`                                                                                | Show current category context                                                                                                             |
+| `trt category add <name>`                                                                          | Add a new category with the given name                                                                                                    |
+| `trt category delete <name> (--new-category <category_name or category_id>)`                       | Delete a category and optionally move its tasks                                                                                           |
+| `trt category update <old_name> <new_name>`                                                        | Update an existing category with the given name                                                                                           |
+| `trt category list`                                                                                | List all categories with their IDs                                                                                                        |
+| `trt category order <category_name or category_id> <position>`                                     | Move a category to the given 1-based position in `category list`                                                                          |
+| `trt category reorder <category_name or category_id>...`                                           | Set the order of several categories at once, in the order given                                                                           |
+| `trt config set <key=value>`                                                                       | Set configuration key to value                                                                                                            |
+| `trt config default <key>`                                                                         | Unsets the value for key to force use of the default value                                                                                |
+| `trt config list`                                                                                  | List all configuration keys and their values, including defaults which will be indicated with an asterisk                                 |
+| `trt deleted list`                                                                                 | List all soft-deleted tasks with their IDs, titles, original categories, and deletion dates - i.e. exactly what a `flush` would destroy   |
+| `trt deleted restore <title or id>`                                                                | Restore a soft-deleted task to its original category. Matches soft-deleted tasks only, prompting if the title is ambiguous                |
+| `trt deleted flush [--yes (or -y, --force)]`                                                       | Permanently remove all soft-deleted tasks, listing them and asking for confirmation first. `--yes` skips the prompt                       |
+| `trt --help`                                                                                       | List these commands                                                                                                                       |
+| `trt --help <command>`                                                                             | Describe command and its arguments                                                                                                        |
+| `trt --config <path>`                                                                              | Uses the configuration file at the given path instead of the default. May also be set via the `TRT_CONFIG` environment variable; the flag wins  |
+| `trt --yes` (or `-y`)                                                                              | Assume "yes" for confirmation prompts and never read from stdin                                                                           |
+| `trt --no-input`                                                                                   | Never prompt: decline confirmations and never read from stdin                                                                             |
 
 ## Additional Behaviors
 
-The first time `trtodo` is run it should offer to create the default categories of "Home" and "Work" and create a configuration file under `.config\trtodo\` or `C:\\Users\\<username>\\AppData\\Roaming\trtodo`.
+The first time `trt` is run it should offer to create the default categories of "Home" and "Work" and create a configuration file under `.config\trt\` or `C:\\Users\\<username>\\AppData\\Roaming\trt`.
 
 That offer defaults to yes (a bare Enter accepts it) and is made at most once:
 
-- It is made by the first command that touches task storage, not by `trtodo config ...`. Config commands never open task storage, and creating categories from a read-only `config list` - or from the very `config set storage.path=...` that decides where task data belongs - would put data somewhere the user did not ask for.
+- It is made by the first command that touches task storage, not by `trt config ...`. Config commands never open task storage, and creating categories from a read-only `config list` - or from the very `config set storage.path=...` that decides where task data belongs - would put data somewhere the user did not ask for.
 - The answer is recorded in the configuration file, so no later run asks again. Accepting, declining, and already having categories (an existing install, upgraded or otherwise) all count as answered; deleting every category afterwards is a legitimate empty state and does not bring the offer back.
 - With no terminal attached (a pipe, a cron job, CI) there is nobody to ask, so the offer is silently skipped: nothing is created, nothing is recorded, and nothing blocks waiting for input. Pass `--yes` or `--no-input` to give a definite answer from a script.
 
@@ -81,7 +81,7 @@ Category context (set via `category use`) persists between runs of the applicati
 
 ## Configuration Values
 
-Configuration values are stored in `trtodo-config.json`. By default it's written to a config folder unless it's first read in your home directory. 
+Configuration values are stored in `trt-config.json`. By default it's written to a config folder unless it's first read in your home directory. 
 
 The keys below are the configurable ones - they are exactly what `config set`, `config default`, and `config list` operate on. The file may also contain internal bookkeeping that is not a setting (currently `default_categories_offered`, which records that the first-run offer above has been answered); those are not listed by `config list` and cannot be set with `config set`.
 
@@ -89,7 +89,7 @@ The keys below are the configurable ones - they are exactly what `config set`, `
 | ----------------------- | ------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `deleted-task-lifespan` | `0`                | integer<1..?>       | Number of days before task in Deleted category are deleted. A value of 0, the default, indicates they are never automatically deleted |
 | `storage.type`          | `json`             | `json\|sqlite`      | Type of storage backend to use                                                                                                        |
-| `storage.path`          | `~/.config/trtodo` | string              | Path to storage location                                                                                                              |
+| `storage.path`          | `~/.config/trt` | string              | Path to storage location                                                                                                              |
 | `default-category`      | `null`             | string              | Category `add` files new tasks into when no `--category` is given and no category context is set. Must name an existing category (by name or ID) - `add` reports an error rather than guessing if it no longer resolves. `category update` carries this setting along when it renames the category it currently names |
 | `default-priority`      | `medium`           | `high\|medium\|low` | Default priority for new tasks                                                                                                        |
 
@@ -99,8 +99,8 @@ The keys below are the configurable ones - they are exactly what `config set`, `
 
 | `storage.type` | Data file          |
 | -------------- | ------------------ |
-| `json`         | `trtodo-data.json` |
-| `sqlite`       | `trtodo-data.db`   |
+| `json`         | `trt-data.json` |
+| `sqlite`       | `trt-data.db`   |
 
 Because of that, changing `storage.type` moves your tasks and categories to the new backend's file:
 

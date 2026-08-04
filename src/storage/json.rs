@@ -25,8 +25,8 @@ impl JsonStorage {
     ///
     /// This makes the guarantee local to the backend instead of depending on a
     /// filename convention maintained elsewhere. While normal configuration
-    /// routes each backend to a distinct file (`trtodo-data.json` vs
-    /// `trtodo-data.db`), a direct `JsonStorage::new(...)` call with an
+    /// routes each backend to a distinct file (`trt-data.json` vs
+    /// `trt-data.db`), a direct `JsonStorage::new(...)` call with an
     /// arbitrary path can reach any file. The check closes that gap.
     fn validate_target_format(&self) -> Result<(), StorageError> {
         if !self.path.exists() {

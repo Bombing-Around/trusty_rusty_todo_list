@@ -13,12 +13,12 @@ pub enum Priority {
 pub struct Cli {
     /// Path to the configuration file to use instead of the default
     ///
-    /// Takes precedence over the `TRTODO_CONFIG` environment variable.
+    /// Takes precedence over the `TRT_CONFIG` environment variable.
     #[arg(
         long = "config",
         value_name = "PATH",
         global = true,
-        env = "TRTODO_CONFIG"
+        env = "TRT_CONFIG"
     )]
     pub config: Option<PathBuf>,
 
@@ -237,7 +237,7 @@ pub enum CategoryCommands {
 }
 
 /// The `deleted` namespace: everything you can do with the tasks that
-/// `trtodo delete` soft-deleted (the `deleted_at` timestamp).
+/// `trt delete` soft-deleted (the `deleted_at` timestamp).
 ///
 /// `list` and `restore` were previously absent on the grounds that the
 /// README documented only `flush`; the README now documents all three.
@@ -301,15 +301,15 @@ mod tests {
     #[test]
     fn test_config_path_override() {
         // Accepted before the subcommand.
-        let cli = parse_args(&["trtodo", "--config", "/tmp/x.json", "config", "list"]);
+        let cli = parse_args(&["trt", "--config", "/tmp/x.json", "config", "list"]);
         assert_eq!(cli.config, Some(PathBuf::from("/tmp/x.json")));
 
         // And after it, since the argument is global.
-        let cli = parse_args(&["trtodo", "config", "list", "--config", "/tmp/x.json"]);
+        let cli = parse_args(&["trt", "config", "list", "--config", "/tmp/x.json"]);
         assert_eq!(cli.config, Some(PathBuf::from("/tmp/x.json")));
 
         // Absent by default, so ConfigManager falls back to the $HOME location.
-        let cli = parse_args(&["trtodo", "config", "list"]);
+        let cli = parse_args(&["trt", "config", "list"]);
         assert_eq!(cli.config, None);
     }
 
@@ -318,27 +318,27 @@ mod tests {
     /// exclusive - "assume yes" and "assume no" cannot both hold.
     #[test]
     fn test_non_interactive_flags() {
-        let cli = parse_args(&["trtodo", "--yes", "list"]);
+        let cli = parse_args(&["trt", "--yes", "list"]);
         assert!(cli.yes);
         assert!(!cli.no_input);
 
-        let cli = parse_args(&["trtodo", "list", "-y"]);
+        let cli = parse_args(&["trt", "list", "-y"]);
         assert!(cli.yes);
 
-        let cli = parse_args(&["trtodo", "list", "--no-input"]);
+        let cli = parse_args(&["trt", "list", "--no-input"]);
         assert!(cli.no_input);
         assert!(!cli.yes);
 
-        let cli = parse_args(&["trtodo", "list"]);
+        let cli = parse_args(&["trt", "list"]);
         assert!(!cli.yes);
         assert!(!cli.no_input);
 
-        assert!(try_parse_args(&["trtodo", "--yes", "--no-input", "list"]).is_err());
+        assert!(try_parse_args(&["trt", "--yes", "--no-input", "list"]).is_err());
     }
 
     #[test]
     fn test_add_task() {
-        let cli = parse_args(&["trtodo", "add", "Buy milk", "--category", "Home"]);
+        let cli = parse_args(&["trt", "add", "Buy milk", "--category", "Home"]);
         match cli.command {
             Commands::Add {
                 title,
@@ -354,7 +354,7 @@ mod tests {
 
         // `--category` is optional: omitting it parses cleanly and
         // leaves resolution to `main::resolve_add_category`.
-        let cli = parse_args(&["trtodo", "add", "Buy milk"]);
+        let cli = parse_args(&["trt", "add", "Buy milk"]);
         match cli.command {
             Commands::Add {
                 title,
@@ -370,7 +370,7 @@ mod tests {
 
         // Test with priority
         let cli = parse_args(&[
-            "trtodo",
+            "trt",
             "add",
             "Buy milk",
             "--category",
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn test_list_tasks() {
         // Test basic list
-        let cli = parse_args(&["trtodo", "list"]);
+        let cli = parse_args(&["trt", "list"]);
         match cli.command {
             Commands::List {
                 search,
@@ -411,7 +411,7 @@ mod tests {
 
         // Test list with all options
         let cli = parse_args(&[
-            "trtodo",
+            "trt",
             "list",
             "--search",
             "milk",
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn test_category_commands() {
         // Test category use
-        let cli = parse_args(&["trtodo", "category", "use", "Home"]);
+        let cli = parse_args(&["trt", "category", "use", "Home"]);
         match cli.command {
             Commands::Category { command } => match command {
                 CategoryCommands::Use { category } => {
@@ -448,7 +448,7 @@ mod tests {
         }
 
         // Test category list
-        let cli = parse_args(&["trtodo", "category", "list"]);
+        let cli = parse_args(&["trt", "category", "list"]);
         match cli.command {
             Commands::Category { command } => match command {
                 CategoryCommands::List => {}
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_category_order_command() {
-        let cli = parse_args(&["trtodo", "category", "order", "Work", "2"]);
+        let cli = parse_args(&["trt", "category", "order", "Work", "2"]);
         match cli.command {
             Commands::Category { command } => match command {
                 CategoryCommands::Order { category, position } => {
@@ -474,14 +474,14 @@ mod tests {
 
         // Position must parse as a non-negative integer; clap rejects
         // anything else before it ever reaches `main`.
-        assert!(try_parse_args(&["trtodo", "category", "order", "Work", "-1"]).is_err());
-        assert!(try_parse_args(&["trtodo", "category", "order", "Work", "nope"]).is_err());
-        assert!(try_parse_args(&["trtodo", "category", "order", "Work"]).is_err());
+        assert!(try_parse_args(&["trt", "category", "order", "Work", "-1"]).is_err());
+        assert!(try_parse_args(&["trt", "category", "order", "Work", "nope"]).is_err());
+        assert!(try_parse_args(&["trt", "category", "order", "Work"]).is_err());
     }
 
     #[test]
     fn test_category_reorder_command() {
-        let cli = parse_args(&["trtodo", "category", "reorder", "Work", "Home", "Personal"]);
+        let cli = parse_args(&["trt", "category", "reorder", "Work", "Home", "Personal"]);
         match cli.command {
             Commands::Category { command } => match command {
                 CategoryCommands::Reorder { categories } => {
@@ -500,7 +500,7 @@ mod tests {
         }
 
         // A single category is a legal (if degenerate) reorder.
-        let cli = parse_args(&["trtodo", "category", "reorder", "Work"]);
+        let cli = parse_args(&["trt", "category", "reorder", "Work"]);
         match cli.command {
             Commands::Category { command } => match command {
                 CategoryCommands::Reorder { categories } => {
@@ -516,13 +516,13 @@ mod tests {
     fn test_category_reorder_requires_at_least_one_category() {
         // An empty reorder has nothing to do and is refused at parse time
         // rather than accepted as a silent no-op.
-        assert!(try_parse_args(&["trtodo", "category", "reorder"]).is_err());
+        assert!(try_parse_args(&["trt", "category", "reorder"]).is_err());
     }
 
     #[test]
     fn test_config_commands() {
         // Test config set
-        let cli = parse_args(&["trtodo", "config", "set", "storage.type=json"]);
+        let cli = parse_args(&["trt", "config", "set", "storage.type=json"]);
         match cli.command {
             Commands::Config { command } => match command {
                 ConfigCommands::Set { key_value } => {
@@ -534,7 +534,7 @@ mod tests {
         }
 
         // Test config list
-        let cli = parse_args(&["trtodo", "config", "list"]);
+        let cli = parse_args(&["trt", "config", "list"]);
         match cli.command {
             Commands::Config { command } => match command {
                 ConfigCommands::List => {}
@@ -547,7 +547,7 @@ mod tests {
     #[test]
     fn test_deleted_commands() {
         // Test deleted list
-        let cli = parse_args(&["trtodo", "deleted", "list"]);
+        let cli = parse_args(&["trt", "deleted", "list"]);
         match cli.command {
             Commands::Deleted { command } => match command {
                 DeletedCommands::List => {}
@@ -557,7 +557,7 @@ mod tests {
         }
 
         // Test deleted restore
-        let cli = parse_args(&["trtodo", "deleted", "restore", "Buy milk"]);
+        let cli = parse_args(&["trt", "deleted", "restore", "Buy milk"]);
         match cli.command {
             Commands::Deleted { command } => match command {
                 DeletedCommands::Restore { title_or_id } => {
@@ -570,7 +570,7 @@ mod tests {
 
         // Test deleted flush: confirmation is opt-out, so `yes` is false
         // unless the escape hatch was passed.
-        let cli = parse_args(&["trtodo", "deleted", "flush"]);
+        let cli = parse_args(&["trt", "deleted", "flush"]);
         match cli.command {
             Commands::Deleted { command } => match command {
                 DeletedCommands::Flush { yes } => assert!(!yes),
@@ -581,7 +581,7 @@ mod tests {
 
         // ... in any of its three spellings.
         for flag in ["--yes", "-y", "--force"] {
-            let cli = parse_args(&["trtodo", "deleted", "flush", flag]);
+            let cli = parse_args(&["trt", "deleted", "flush", flag]);
             match cli.command {
                 Commands::Deleted { command } => match command {
                     DeletedCommands::Flush { yes } => assert!(yes, "{flag} should confirm"),
@@ -596,7 +596,7 @@ mod tests {
     fn test_deleted_restore_requires_a_task_reference() {
         // Nothing sensible to restore without one, and defaulting to "all"
         // would be a surprising thing to do by accident.
-        assert!(try_parse_args(&["trtodo", "deleted", "restore"]).is_err());
+        assert!(try_parse_args(&["trt", "deleted", "restore"]).is_err());
     }
 
     #[test]
@@ -606,16 +606,16 @@ mod tests {
         // can supply it. Parsing must therefore *succeed* without it - the
         // decision of where the task lands moved to `main`, which has the
         // storage and config access needed to make it.
-        let result = try_parse_args(&["trtodo", "add", "Buy milk"]);
+        let result = try_parse_args(&["trt", "add", "Buy milk"]);
         assert!(result.is_ok());
 
         // A title is still required, though: nothing can supply that.
-        let result = try_parse_args(&["trtodo", "add"]);
+        let result = try_parse_args(&["trt", "add"]);
         assert!(result.is_err());
 
         // Test that priority must be valid
         let result = try_parse_args(&[
-            "trtodo",
+            "trt",
             "add",
             "Buy milk",
             "--category",
@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn test_command_aliases() {
         // Test 'x' alias for check
-        let cli = parse_args(&["trtodo", "x", "Buy milk", "--category", "Home"]);
+        let cli = parse_args(&["trt", "x", "Buy milk", "--category", "Home"]);
         match cli.command {
             Commands::Check {
                 title_or_id,
@@ -642,7 +642,7 @@ mod tests {
         }
 
         // Test 'mark' alias for check
-        let cli = parse_args(&["trtodo", "mark", "Buy milk", "--category", "Home"]);
+        let cli = parse_args(&["trt", "mark", "Buy milk", "--category", "Home"]);
         match cli.command {
             Commands::Check {
                 title_or_id,
@@ -655,7 +655,7 @@ mod tests {
         }
 
         // Test 'o' alias for uncheck
-        let cli = parse_args(&["trtodo", "o", "Buy milk", "--category", "Home"]);
+        let cli = parse_args(&["trt", "o", "Buy milk", "--category", "Home"]);
         match cli.command {
             Commands::Uncheck {
                 title_or_id,
@@ -668,7 +668,7 @@ mod tests {
         }
 
         // Test 'unmark' alias for uncheck
-        let cli = parse_args(&["trtodo", "unmark", "Buy milk", "--category", "Home"]);
+        let cli = parse_args(&["trt", "unmark", "Buy milk", "--category", "Home"]);
         match cli.command {
             Commands::Uncheck {
                 title_or_id,
@@ -684,7 +684,7 @@ mod tests {
     #[test]
     fn test_move_commands() {
         // Test simple move syntax
-        let cli = parse_args(&["trtodo", "move", "Buy milk", "--to", "Shopping"]);
+        let cli = parse_args(&["trt", "move", "Buy milk", "--to", "Shopping"]);
         match cli.command {
             Commands::Move {
                 task_name_or_id,
@@ -702,7 +702,7 @@ mod tests {
 
         // Test extended move syntax
         let cli = parse_args(&[
-            "trtodo", "move", "--from", "Home", "--to", "Shopping", "--task", "Buy milk",
+            "trt", "move", "--from", "Home", "--to", "Shopping", "--task", "Buy milk",
         ]);
         match cli.command {
             Commands::Move {
@@ -720,7 +720,7 @@ mod tests {
         }
 
         // Test extended move syntax without target category (move to uncategorized)
-        let cli = parse_args(&["trtodo", "move", "--from", "Home", "--task", "Buy milk"]);
+        let cli = parse_args(&["trt", "move", "--from", "Home", "--task", "Buy milk"]);
         match cli.command {
             Commands::Move {
                 task_name_or_id,

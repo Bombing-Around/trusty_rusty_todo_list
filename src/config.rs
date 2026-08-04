@@ -103,7 +103,7 @@ fn validate_lifespan(value: &str) -> Result<u32, ConfigError> {
 // A `Config` value is used to represent two conceptually different things,
 // and keeping them straight is the whole point of this module:
 //
-// - "stored" config: what is actually written in `trtodo-config.json`. A
+// - "stored" config: what is actually written in `trt-config.json`. A
 //   `None` field here means *unset* - the user (or a fresh install) never
 //   wrote anything for it. This is what `ConfigStorage::load()` returns and
 //   what `config list`'s `*` markers are computed from.
@@ -250,7 +250,7 @@ fn default_storage_type() -> Option<String> {
 fn default_storage_path() -> Option<String> {
     dirs::home_dir().map(|home| {
         home.join(".config")
-            .join("trtodo")
+            .join("trt")
             .to_string_lossy()
             .to_string()
     })
@@ -270,9 +270,7 @@ impl ConfigManager {
             path.to_path_buf()
         } else {
             let home = dirs::home_dir().expect("Could not determine home directory");
-            home.join(".config")
-                .join("trtodo")
-                .join("trtodo-config.json")
+            home.join(".config").join("trt").join("trt-config.json")
         };
 
         let storage =
@@ -493,7 +491,7 @@ mod tests {
         assert_eq!(manager.get("storage.type"), Some("json".to_string()));
 
         // Test setting storage path
-        let storage_path = "~/.config/trtodo";
+        let storage_path = "~/.config/trt";
         assert!(manager.set("storage.path", storage_path).is_ok());
         assert_eq!(
             manager.get("storage.path"),

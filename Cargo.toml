@@ -30,21 +30,28 @@ rust-version = "1.78"
 # not the one line it takes to flip: `publish = false` also blocks the dry run,
 # so the manifest would rot unpublishable without anything reporting it.
 #
-# Both `trusty_rusty_todo_list` and `trtodo` were unregistered when this was
-# written. Neither is reserved by saying so here - crates.io has no mechanism
-# for that short of publishing - so if the name matters, publishing an early
-# version is the only thing that holds it.
+# `trusty_rusty_todo_list` was unregistered when this was written, and saying
+# so reserves nothing - crates.io has no mechanism for holding a name short of
+# publishing to it.
 #
-# Note the package name and the binary name differ: installing this would be
-# `cargo install trusty_rusty_todo_list` to get a `trtodo` on your PATH. That
-# is allowed, and it is worth deciding on purpose before a first publish
-# rather than after, because the package name is the half that cannot be
-# changed afterwards.
+# The package name and the binary name differ on purpose, and the difference is
+# not free: installing this is `cargo install trusty_rusty_todo_list` to get a
+# `trt` on your PATH. `trt` is not available as a package name - it belongs to
+# an unrelated tokio runtime crate - so the two cannot be made to match by
+# renaming the package to the binary. That crate is a library and ships no
+# executable, so nothing it installs can collide with this one; the collision
+# is only over the crates.io namespace.
+#
+# The binary name is the constraint that actually bites, because it is what
+# lands on a stranger's PATH. `tr` was considered and rejected: it is
+# POSIX-specified and ships in coreutils, so shadowing it would break shell
+# scripts anywhere this sorted earlier on PATH, in ways that surface far from
+# the cause.
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bin]]
-name = "trtodo"
+name = "trt"
 path = "src/main.rs"
 
 [dependencies]

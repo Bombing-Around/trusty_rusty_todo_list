@@ -51,8 +51,8 @@ impl StorageType {
     /// deal with.
     pub fn data_file_name(self) -> &'static str {
         match self {
-            StorageType::Json => "trtodo-data.json",
-            StorageType::Sqlite => "trtodo-data.db",
+            StorageType::Json => "trt-data.json",
+            StorageType::Sqlite => "trt-data.db",
         }
     }
 }
@@ -466,8 +466,8 @@ mod tests {
     #[test]
     fn test_migrate_storage_carries_data_across_backends() {
         let dir = TempDir::new().unwrap();
-        let json_path = dir.path().join("trtodo-data.json");
-        let sqlite_path = dir.path().join("trtodo-data.db");
+        let json_path = dir.path().join("trt-data.json");
+        let sqlite_path = dir.path().join("trt-data.db");
 
         let source = create_storage(StorageType::Json, &json_path).unwrap();
         source.save(&populated_data()).unwrap();
@@ -513,12 +513,11 @@ mod tests {
     #[test]
     fn test_migrate_storage_carries_data_back_from_sqlite_to_json() {
         let dir = TempDir::new().unwrap();
-        let source =
-            create_storage(StorageType::Sqlite, &dir.path().join("trtodo-data.db")).unwrap();
+        let source = create_storage(StorageType::Sqlite, &dir.path().join("trt-data.db")).unwrap();
         source.save(&populated_data()).unwrap();
 
         let destination =
-            create_storage(StorageType::Json, &dir.path().join("trtodo-data.json")).unwrap();
+            create_storage(StorageType::Json, &dir.path().join("trt-data.json")).unwrap();
         assert_eq!(
             migrate_storage(&*source, &*destination).unwrap(),
             MigrationOutcome::Migrated {
@@ -540,8 +539,8 @@ mod tests {
     #[test]
     fn test_migrate_storage_never_clobbers_a_non_empty_destination() {
         let dir = TempDir::new().unwrap();
-        let json_path = dir.path().join("trtodo-data.json");
-        let sqlite_path = dir.path().join("trtodo-data.db");
+        let json_path = dir.path().join("trt-data.json");
+        let sqlite_path = dir.path().join("trt-data.db");
 
         let source = create_storage(StorageType::Sqlite, &sqlite_path).unwrap();
         source.save(&populated_data()).unwrap();
@@ -581,8 +580,8 @@ mod tests {
     #[test]
     fn test_migrate_storage_reports_an_empty_source_without_writing() {
         let dir = TempDir::new().unwrap();
-        let json_path = dir.path().join("trtodo-data.json");
-        let sqlite_path = dir.path().join("trtodo-data.db");
+        let json_path = dir.path().join("trt-data.json");
+        let sqlite_path = dir.path().join("trt-data.db");
 
         let source = create_storage(StorageType::Json, &json_path).unwrap();
         let destination = create_storage(StorageType::Sqlite, &sqlite_path).unwrap();
@@ -601,15 +600,14 @@ mod tests {
     #[test]
     fn test_migrate_storage_carries_soft_deleted_tasks_too() {
         let dir = TempDir::new().unwrap();
-        let source =
-            create_storage(StorageType::Json, &dir.path().join("trtodo-data.json")).unwrap();
+        let source = create_storage(StorageType::Json, &dir.path().join("trt-data.json")).unwrap();
 
         let mut data = populated_data();
         data.tasks[0].soft_delete();
         source.save(&data).unwrap();
 
         let destination =
-            create_storage(StorageType::Sqlite, &dir.path().join("trtodo-data.db")).unwrap();
+            create_storage(StorageType::Sqlite, &dir.path().join("trt-data.db")).unwrap();
         assert_eq!(
             migrate_storage(&*source, &*destination).unwrap(),
             MigrationOutcome::Migrated {
@@ -936,7 +934,7 @@ mod tests {
     /// The automatic sweep runs on *every* invocation (see
     /// `main::open_storage`), so when there is nothing overdue it must leave
     /// the data file completely alone rather than rewriting it. Otherwise a
-    /// read-only `trtodo list` would rewrite storage on every run whenever a
+    /// read-only `trt list` would rewrite storage on every run whenever a
     /// non-zero `deleted-task-lifespan` is configured.
     #[test]
     fn test_purge_deleted_tasks_does_not_rewrite_storage_when_nothing_is_due() {

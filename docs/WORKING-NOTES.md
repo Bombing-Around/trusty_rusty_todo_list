@@ -18,7 +18,7 @@ how to spend fewer tokens getting the same work done.
 - **There is no lib target.** `cargo test --lib` fails outright with `no
   library targets found in package`. The unit tests live in the binary
   target alongside the integration tests. Use plain `cargo test`, or
-  `cargo test --bin trtodo` to skip the integration suites.
+  `cargo test --bin trt` to skip the integration suites.
 
 - **`rusqlite` is vendored with `features = ["bundled"]`**, so a cold build
   compiles SQLite from C source and takes minutes. A warm build takes
@@ -46,7 +46,7 @@ how to spend fewer tokens getting the same work done.
 - **A shared `CARGO_TARGET_DIR` across worktrees will lie to you.** Sharing one
   target directory between parallel worktrees looks like an easy way to avoid
   paying the bundled-`rusqlite` cold build more than once. It is not: every
-  worktree writes the same `debug/trtodo`, and the integration tests invoke
+  worktree writes the same `debug/trt`, and the integration tests invoke
   exactly that binary. Two agents building concurrently means one runs its
   tests against the other's binary, and the failures that produces are
   spurious and unreproducible. Give each worktree its own target directory and
@@ -87,7 +87,7 @@ exercises the features *against each other*, not just a merge that compiles.
 
 A subagent reporting "all tests pass" is a claim about whatever command it
 actually ran. One reported success here having run only `cargo test --bin
-trtodo`, which skips all seven integration suites — the exact place this
+trt`, which skips all seven integration suites — the exact place this
 project's regressions surface. Another reported a passing suite whose numbers
 came from a target directory a concurrent build was overwriting.
 

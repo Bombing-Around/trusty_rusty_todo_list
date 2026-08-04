@@ -61,10 +61,13 @@ re-litigating:
   have blocked the dry run too, letting the manifest rot unpublishable with
   nothing to report it. One thing is still open and gets more expensive after
   a first publish, not less: the package name (`trusty_rusty_todo_list`) and
-  the binary name (`trtodo`) differ, so installing would be
-  `cargo install trusty_rusty_todo_list` to get a `trtodo`. Both names were
-  unregistered when this was written, and neither is reserved by saying so —
-  publishing is the only thing that holds a name.
+  the binary name (`trt`) differ, so installing would be
+  `cargo install trusty_rusty_todo_list` to get a `trt`. They cannot be made
+  to match by renaming the package — `trt` on crates.io belongs to an
+  unrelated tokio runtime library. That crate ships no executable, so there is
+  no PATH collision; the clash is only over the crates.io namespace.
+  `trusty_rusty_todo_list` was unregistered when this was written, and saying
+  so reserves nothing — publishing is the only thing that holds a name.
 
 ## Phase 2 — dates and times
 

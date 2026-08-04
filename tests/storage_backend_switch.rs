@@ -1,4 +1,4 @@
-//! End-to-end coverage of `trtodo config set storage.type=...`.
+//! End-to-end coverage of `trt config set storage.type=...`.
 //!
 //! Once the original "file is not a database" panic was gone, this was what
 //! remained: each backend keeps its own data file, so changing
@@ -13,22 +13,22 @@
 //!
 //! Every invocation is pointed at a `--config` file inside a `TempDir` with
 //! `storage.path` pointing into the same `TempDir`, and `$HOME` at a path that
-//! does not exist, so the real `~/.config/trtodo` is never read or written.
+//! does not exist, so the real `~/.config/trt` is never read or written.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-struct Trtodo {
+struct Trt {
     _dir: TempDir,
     config_path: PathBuf,
     data_dir: PathBuf,
 }
 
-impl Trtodo {
+impl Trt {
     fn new() -> Self {
         let dir = TempDir::new().unwrap();
-        let config_path = dir.path().join("trtodo-config.json");
+        let config_path = dir.path().join("trt-config.json");
         let data_dir = dir.path().join("data");
         std::fs::create_dir_all(&data_dir).unwrap();
 
@@ -46,14 +46,14 @@ impl Trtodo {
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_trtodo"))
+        Command::new(env!("CARGO_BIN_EXE_trt"))
             .arg("--config")
             .arg(&self.config_path)
             // Make sure nothing can silently fall back to a real home directory.
-            .env("HOME", Path::new("/nonexistent-trtodo-test-home"))
+            .env("HOME", Path::new("/nonexistent-trt-test-home"))
             .args(args)
             .output()
-            .expect("failed to run trtodo")
+            .expect("failed to run trt")
     }
 
     fn ok(&self, args: &[&str]) -> String {
@@ -85,11 +85,11 @@ impl Trtodo {
     }
 
     fn json_file(&self) -> PathBuf {
-        self.data_dir.join("trtodo-data.json")
+        self.data_dir.join("trt-data.json")
     }
 
     fn sqlite_file(&self) -> PathBuf {
-        self.data_dir.join("trtodo-data.db")
+        self.data_dir.join("trt-data.db")
     }
 
     /// Seeds a category, a task in it, and a `category use` context - the
@@ -105,19 +105,19 @@ impl Trtodo {
 /// across instead of stranding it, and says so plainly.
 #[test]
 fn switching_backend_carries_existing_data_across() {
-    let trtodo = Trtodo::new();
-    trtodo.seed();
+    let trt = Trt::new();
+    trt.seed();
 
-    let json_before = std::fs::read_to_string(trtodo.json_file()).unwrap();
+    let json_before = std::fs::read_to_string(trt.json_file()).unwrap();
     assert!(json_before.contains("Finish report"));
 
-    let (stdout, stderr) = trtodo.ok_both(&["config", "set", "storage.type=sqlite"]);
+    let (stdout, stderr) = trt.ok_both(&["config", "set", "storage.type=sqlite"]);
     assert!(
         stdout.contains("Migrated 1 task(s) and 1 category from json to sqlite"),
         "expected an accurate migration report, got stdout: {stdout}"
     );
     assert!(
-        stdout.contains(&trtodo.json_file().display().to_string()),
+        stdout.contains(&trt.json_file().display().to_string()),
         "the user should be told exactly where their previous data still lives, got: {stdout}"
     );
     // The old "may require data migration" hedge is gone: a migration either
@@ -128,9 +128,9 @@ fn switching_backend_carries_existing_data_across() {
     );
 
     // The data is genuinely there under the new backend...
-    let categories = trtodo.ok(&["category", "list"]);
+    let categories = trt.ok(&["category", "list"]);
     assert!(categories.contains("Work"), "{categories}");
-    let tasks = trtodo.ok(&["list"]);
+    let tasks = trt.ok(&["list"]);
     assert!(tasks.contains("Finish report"), "{tasks}");
     // ... including the `category use` context.
     assert!(
@@ -141,11 +141,11 @@ fn switching_backend_carries_existing_data_across() {
     // ... and the switch was non-destructive: the JSON file is byte-for-byte
     // what it was.
     assert_eq!(
-        std::fs::read_to_string(trtodo.json_file()).unwrap(),
+        std::fs::read_to_string(trt.json_file()).unwrap(),
         json_before,
         "migrating must never rewrite or truncate the source store"
     );
-    assert!(trtodo.sqlite_file().exists());
+    assert!(trt.sqlite_file().exists());
 }
 
 /// Switching back to a backend that already holds data must refuse to
@@ -154,17 +154,17 @@ fn switching_backend_carries_existing_data_across() {
 /// a different feature with different risks.
 #[test]
 fn switching_back_to_a_populated_backend_refuses_to_clobber_and_says_so() {
-    let trtodo = Trtodo::new();
-    trtodo.seed();
-    trtodo.ok(&["config", "set", "storage.type=sqlite"]);
+    let trt = Trt::new();
+    trt.seed();
+    trt.ok(&["config", "set", "storage.type=sqlite"]);
 
     // Diverge the two stores so a clobber in either direction is detectable.
-    trtodo.ok(&["add", "--category", "Work", "Only in sqlite"]);
+    trt.ok(&["add", "--category", "Work", "Only in sqlite"]);
 
-    let json_before = std::fs::read_to_string(trtodo.json_file()).unwrap();
-    let sqlite_before = std::fs::read(trtodo.sqlite_file()).unwrap();
+    let json_before = std::fs::read_to_string(trt.json_file()).unwrap();
+    let sqlite_before = std::fs::read(trt.sqlite_file()).unwrap();
 
-    let (_, stderr) = trtodo.ok_both(&["config", "set", "storage.type=json"]);
+    let (_, stderr) = trt.ok_both(&["config", "set", "storage.type=json"]);
     assert!(
         stderr.contains("json storage already holds"),
         "the user should be told why nothing was migrated, got: {stderr}"
@@ -174,26 +174,26 @@ fn switching_back_to_a_populated_backend_refuses_to_clobber_and_says_so() {
         "the user should be told their data is safe, got: {stderr}"
     );
     assert!(
-        stderr.contains(&trtodo.sqlite_file().display().to_string())
+        stderr.contains(&trt.sqlite_file().display().to_string())
             && stderr.contains("storage.type=sqlite"),
         "the user should be told where the other data is and how to reach it, got: {stderr}"
     );
 
     // Neither store was touched.
     assert_eq!(
-        std::fs::read_to_string(trtodo.json_file()).unwrap(),
+        std::fs::read_to_string(trt.json_file()).unwrap(),
         json_before
     );
-    assert_eq!(std::fs::read(trtodo.sqlite_file()).unwrap(), sqlite_before);
+    assert_eq!(std::fs::read(trt.sqlite_file()).unwrap(), sqlite_before);
 
     // The advertised escape hatch really works: the sqlite-only task is still
     // reachable by switching back.
-    let json_tasks = trtodo.ok(&["list"]);
+    let json_tasks = trt.ok(&["list"]);
     assert!(json_tasks.contains("Finish report"), "{json_tasks}");
     assert!(!json_tasks.contains("Only in sqlite"), "{json_tasks}");
 
-    trtodo.ok(&["config", "set", "storage.type=sqlite"]);
-    let sqlite_tasks = trtodo.ok(&["list"]);
+    trt.ok(&["config", "set", "storage.type=sqlite"]);
+    let sqlite_tasks = trt.ok(&["list"]);
     assert!(sqlite_tasks.contains("Only in sqlite"), "{sqlite_tasks}");
 }
 
@@ -202,9 +202,9 @@ fn switching_back_to_a_populated_backend_refuses_to_clobber_and_says_so() {
 /// data at all.
 #[test]
 fn switching_with_nothing_stored_is_quiet() {
-    let trtodo = Trtodo::new();
+    let trt = Trt::new();
 
-    let (stdout, stderr) = trtodo.ok_both(&["config", "set", "storage.type=sqlite"]);
+    let (stdout, stderr) = trt.ok_both(&["config", "set", "storage.type=sqlite"]);
     assert_eq!(stdout, "Configuration updated successfully\n", "{stdout}");
     assert_eq!(
         stderr, "",
@@ -216,19 +216,19 @@ fn switching_with_nothing_stored_is_quiet() {
 /// so it must not report a migration (and must not risk writing anything).
 #[test]
 fn setting_storage_type_to_its_current_value_is_a_no_op() {
-    let trtodo = Trtodo::new();
-    trtodo.seed();
-    let json_before = std::fs::read_to_string(trtodo.json_file()).unwrap();
+    let trt = Trt::new();
+    trt.seed();
+    let json_before = std::fs::read_to_string(trt.json_file()).unwrap();
 
-    let (stdout, stderr) = trtodo.ok_both(&["config", "set", "storage.type=json"]);
+    let (stdout, stderr) = trt.ok_both(&["config", "set", "storage.type=json"]);
     assert_eq!(stdout, "Configuration updated successfully\n", "{stdout}");
     assert_eq!(stderr, "", "{stderr}");
     assert_eq!(
-        std::fs::read_to_string(trtodo.json_file()).unwrap(),
+        std::fs::read_to_string(trt.json_file()).unwrap(),
         json_before
     );
     assert!(
-        !trtodo.sqlite_file().exists(),
+        !trt.sqlite_file().exists(),
         "a no-op switch must not materialise the other backend's file"
     );
 }
@@ -238,19 +238,19 @@ fn setting_storage_type_to_its_current_value_is_a_no_op() {
 /// half-created store behind.
 #[test]
 fn an_unknown_storage_type_is_still_rejected_cleanly() {
-    let trtodo = Trtodo::new();
-    trtodo.seed();
+    let trt = Trt::new();
+    trt.seed();
 
-    let output = trtodo.run(&["config", "set", "storage.type=postgres"]);
+    let output = trt.run(&["config", "set", "storage.type=postgres"]);
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains("storage.type must be one of"),
         "expected the config validation error, got: {stderr}"
     );
-    assert!(!trtodo.sqlite_file().exists());
+    assert!(!trt.sqlite_file().exists());
     // The setting is unchanged, so the user is still looking at their data.
-    assert!(trtodo.ok(&["list"]).contains("Finish report"));
+    assert!(trt.ok(&["list"]).contains("Finish report"));
 }
 
 /// A store that can't be read is exactly when a user most wants to switch away
@@ -260,14 +260,14 @@ fn an_unknown_storage_type_is_still_rejected_cleanly() {
 /// that nothing was migrated and that the file was left alone.
 #[test]
 fn an_unreadable_source_store_warns_but_does_not_block_the_switch() {
-    let trtodo = Trtodo::new();
-    trtodo.seed();
+    let trt = Trt::new();
+    trt.seed();
 
     // Corrupt the JSON store behind the app's back.
-    std::fs::write(trtodo.json_file(), "{ this is not valid json").unwrap();
-    let corrupted = std::fs::read_to_string(trtodo.json_file()).unwrap();
+    std::fs::write(trt.json_file(), "{ this is not valid json").unwrap();
+    let corrupted = std::fs::read_to_string(trt.json_file()).unwrap();
 
-    let (stdout, stderr) = trtodo.ok_both(&["config", "set", "storage.type=sqlite"]);
+    let (stdout, stderr) = trt.ok_both(&["config", "set", "storage.type=sqlite"]);
     assert!(
         stdout.contains("Configuration updated successfully"),
         "the switch itself must still succeed, got: {stdout}"
@@ -280,12 +280,9 @@ fn an_unreadable_source_store_warns_but_does_not_block_the_switch() {
 
     // The unreadable file is left exactly as found - it is the only copy of
     // whatever is salvageable in there.
-    assert_eq!(
-        std::fs::read_to_string(trtodo.json_file()).unwrap(),
-        corrupted
-    );
+    assert_eq!(std::fs::read_to_string(trt.json_file()).unwrap(), corrupted);
 
     // And the new backend is usable, so the user isn't stuck.
-    trtodo.ok(&["category", "add", "Fresh"]);
-    assert!(trtodo.ok(&["category", "list"]).contains("Fresh"));
+    trt.ok(&["category", "add", "Fresh"]);
+    assert!(trt.ok(&["category", "list"]).contains("Fresh"));
 }

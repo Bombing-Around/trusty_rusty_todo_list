@@ -131,7 +131,7 @@ fn main() {
 fn run() -> Result<(), CliError> {
     let cli = Cli::parse();
 
-    // Initialize config manager, honoring an explicit --config / TRTODO_CONFIG
+    // Initialize config manager, honoring an explicit --config / TRT_CONFIG
     // override so callers (and tests) can point at a config file outside $HOME.
     let mut config_manager = ConfigManager::new(cli.config.as_deref())?;
 
@@ -209,7 +209,7 @@ const DEFAULT_CATEGORIES: [&str; 2] = ["Home", "Work"];
 ///
 /// This is the *only* path to task storage from `run`, which is what decides
 /// the answer to "which commands trigger the offer?": every command that
-/// touches tasks or categories does, and `trtodo config ...` - the one
+/// touches tasks or categories does, and `trt config ...` - the one
 /// command group that never opens task storage - does not. That is
 /// deliberate:
 ///
@@ -236,7 +236,7 @@ fn open_task_storage(
 }
 
 /// Offers to create the README's default "Home" and "Work" categories the
-/// first time `trtodo` touches task storage.
+/// first time `trt` touches task storage.
 ///
 /// "First run" is a *config* fact, not a storage fact: the marker written by
 /// `ConfigManager::record_default_categories_offer` records that the offer
@@ -286,7 +286,7 @@ fn offer_default_categories(
             println!("Category '{}' added with ID {}", name, id);
         }
     } else {
-        println!("Skipped; add categories yourself with 'trtodo category add <name>'");
+        println!("Skipped; add categories yourself with 'trt category add <name>'");
     }
 
     config_manager.record_default_categories_offer()?;
@@ -296,7 +296,7 @@ fn offer_default_categories(
 /// Builds the task storage backend described by the current configuration.
 ///
 /// `storage.path` is the storage *location* (a directory, per the README's
-/// `~/.config/trtodo` default); the data file inside it is named after the
+/// `~/.config/trt` default); the data file inside it is named after the
 /// chosen backend.
 ///
 /// Also sweeps up anything overdue for automatic purging under
@@ -336,7 +336,7 @@ fn storage_dir(config_manager: &ConfigManager) -> Result<PathBuf, CliError> {
         None => Ok(dirs::home_dir()
             .ok_or(CliError::NoHomeDirectory)?
             .join(".config")
-            .join("trtodo")),
+            .join("trt")),
     }
 }
 
@@ -428,7 +428,7 @@ fn carry_data_across_backend_switch(
                 e
             );
             eprintln!(
-                "Warning: the file has been left untouched. Run 'trtodo config set \
+                "Warning: the file has been left untouched. Run 'trt config set \
                  storage.type={}' to go back to it.",
                 old_type.as_str()
             );
@@ -468,7 +468,7 @@ fn carry_data_across_backend_switch(
                 if categories == 1 { "y" } else { "ies" }
             );
             eprintln!(
-                "Warning: your {} data is still intact at {}. Run 'trtodo config set \
+                "Warning: your {} data is still intact at {}. Run 'trt config set \
                  storage.type={}' to go back to it.",
                 old_type.as_str(),
                 old_file.display(),
@@ -608,7 +608,7 @@ fn run_category_command(
     Ok(())
 }
 
-/// Dispatches `trtodo deleted ...`. Mirrors `run_category_command`'s shape.
+/// Dispatches `trt deleted ...`. Mirrors `run_category_command`'s shape.
 ///
 /// Unlike that function this also needs a `CategoryManager`: soft-deleted
 /// tasks keep their real `category_id`, and both `list` and
