@@ -153,8 +153,13 @@ jobs:
         cache-targets: true
         cache-on-failure: true
 
+    # --no-fail-fast because this is the matrix job. cargo stops at the first
+    # failing test binary, so a platform that breaks several of them reveals
+    # one per CI round trip, and each round trip is a push and a full rebuild
+    # on three runners. Surfacing every failure in one run is the difference
+    # between one fix and a queue of them.
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --verbose --no-fail-fast
 
     # A raw test count is this project's cheapest tripwire for its known
     # failure mode: a test deleted rather than a bug fixed. Reported, not

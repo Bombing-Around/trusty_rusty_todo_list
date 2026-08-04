@@ -105,8 +105,14 @@ fn fresh_install_reports_documented_defaults() {
     );
     let (_, storage_path, is_default) = find(&entries, "storage.path");
     assert!(*is_default, "{out}");
+    // Compared as path components rather than as a string suffix. The value is
+    // rendered with the platform's separator, so a literal "/.config/trt"
+    // asserts the separator as much as the path and fails on Windows against a
+    // perfectly correct `C:\Users\...\.config\trt`. `Path::ends_with` matches
+    // whole components and is separator-agnostic.
+    let expected_tail = Path::new(".config").join("trt");
     assert!(
-        storage_path.ends_with("/.config/trt"),
+        Path::new(storage_path).ends_with(&expected_tail),
         "expected an expanded ~/.config/trt path, got {storage_path}"
     );
     assert_eq!(
