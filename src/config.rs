@@ -264,7 +264,6 @@ pub struct ConfigManager {
     storage: Box<dyn Storage>,
 }
 
-#[allow(dead_code)]
 impl ConfigManager {
     pub fn new(config_path: Option<&Path>) -> Result<Self, ConfigError> {
         let config_path = if let Some(path) = config_path {
@@ -283,25 +282,10 @@ impl ConfigManager {
         Ok(Self { storage })
     }
 
-    pub fn save(&self) -> Result<(), ConfigError> {
-        let data = crate::models::StorageData {
-            version: 1,
-            tasks: Vec::new(),
-            categories: Vec::new(),
-            config: self.stored_config(),
-            current_category: None,
-            last_sync: chrono::Utc::now(),
-        };
-        self.storage
-            .save(&data)
-            .map_err(|e| ConfigError::Storage(e.to_string()))
-    }
-
     /// Returns the *effective* value for `key`: whatever is stored, or the
     /// documented default if nothing was ever set. This is what callers that
     /// need a usable value (like `main::open_storage`, which picks the
     /// storage backend and path) should call.
-    #[allow(dead_code)]
     pub fn get(&self, key: &str) -> Option<String> {
         let config = self.effective_config();
         match key {

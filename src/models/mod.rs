@@ -14,8 +14,13 @@ pub struct Task {
     pub category_id: u64,
     pub completed: bool,
     pub priority: Priority,
+    // Both backends read and write these two, and both are always `None`/`0`
+    // in practice: no command sets a due date, and nothing orders tasks within
+    // a category. Persisting them anyway is deliberate - dropping either would
+    // be a schema change to remove a column that costs nothing today and that
+    // the planned due-date work needs intact.
     pub due_date: Option<DateTime<Utc>>,
-    pub order: u32, // For custom sorting within category
+    pub order: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// When this task was soft-deleted, or `None` if it is live.
@@ -27,7 +32,6 @@ pub struct Task {
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
-#[allow(dead_code)]
 impl Task {
     pub fn new(
         title: String,
@@ -54,10 +58,11 @@ impl Task {
         })
     }
 
-    pub fn is_uncategorized(&self) -> bool {
-        self.category_id == 0
-    }
-
+    /// Whether this task is soft-deleted. `Storage::live_tasks` and
+    /// `Storage::get_deleted_tasks` are the two callers that matter: they are
+    /// exact opposites of each other, and routing both through this predicate
+    /// is what keeps them from drifting into disagreeing about what "deleted"
+    /// means.
     pub fn is_deleted(&self) -> bool {
         self.deleted_at.is_some()
     }
@@ -126,24 +131,8 @@ impl Task {
         self.category_id = new_category_id;
         self.updated_at = Utc::now();
     }
-
-    pub fn set_due_date(&mut self, due_date: Option<DateTime<Utc>>) {
-        self.due_date = due_date;
-        self.updated_at = Utc::now();
-    }
-
-    pub fn set_priority(&mut self, priority: Priority) {
-        self.priority = priority;
-        self.updated_at = Utc::now();
-    }
-
-    pub fn set_order(&mut self, order: u32) {
-        self.order = order;
-        self.updated_at = Utc::now();
-    }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Error)]
 pub enum TaskError {
     #[error("Task title cannot be empty")]
@@ -163,7 +152,6 @@ pub struct Category {
     pub created_at: DateTime<Utc>,
 }
 
-#[allow(dead_code)]
 impl Category {
     pub fn new(name: String, description: Option<String>) -> Result<Self, CategoryError> {
         if name.trim().is_empty() {
@@ -192,7 +180,6 @@ impl Category {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Error)]
 pub enum CategoryError {
     #[error("Category name cannot be empty")]
@@ -212,7 +199,6 @@ pub enum Priority {
     Low,
 }
 
-#[allow(dead_code)]
 impl Priority {
     pub fn from_str(s: &str) -> Result<Self, PriorityError> {
         match s.to_lowercase().as_str() {
@@ -230,13 +216,8 @@ impl Priority {
             Priority::Low => "low",
         }
     }
-
-    pub fn default() -> Self {
-        Priority::Medium
-    }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Error)]
 pub enum PriorityError {
     #[error("Invalid priority value: {0}")]
@@ -296,7 +277,6 @@ impl StorageData {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Error)]
 pub enum StorageError {
     #[error("IO error: {0}")]

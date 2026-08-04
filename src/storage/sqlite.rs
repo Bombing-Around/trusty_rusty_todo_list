@@ -15,20 +15,17 @@ use std::sync::{Arc, Mutex};
 ///
 /// Bump this *and* teach `initialize_schema` how to get a database from the
 /// previous version to the new one whenever the on-disk shape changes.
-#[allow(dead_code)]
 const SCHEMA_VERSION: i32 = 2;
 
 /// Created and read before anything else, so `initialize_schema` can find out
 /// what it is dealing with *before* it starts mutating tables. Deliberately
 /// separate from `INIT_SCHEMA` below for that ordering alone.
-#[allow(dead_code)]
 const INIT_VERSION_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
 );
 "#;
 
-#[allow(dead_code)]
 const INIT_SCHEMA: &str = r#"
 -- Create categories table
 CREATE TABLE IF NOT EXISTS categories (
@@ -67,7 +64,6 @@ pub struct SqliteStorage {
     pub conn: Arc<Mutex<Connection>>,
 }
 
-#[allow(dead_code)]
 impl SqliteStorage {
     pub fn new(path: &Path) -> Result<Self, StorageError> {
         let conn = Connection::open(path)
