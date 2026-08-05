@@ -94,7 +94,16 @@ impl Trt {
         self.ok(&["category", "list"])
             .lines()
             .filter_map(|line| line.split_once(": "))
-            .map(|(_, name)| name.trim_end_matches(" (current)").to_string())
+            .map(|(_, rest)| {
+                // Strips the trailing "(current)" marker and the
+                // "(description: ...)" suffix `category list` always
+                // appends, leaving just the name.
+                rest.split_once(" (description:")
+                    .map(|(name, _)| name)
+                    .unwrap_or(rest)
+                    .trim_end_matches(" (current)")
+                    .to_string()
+            })
             .filter(|name| name != "Uncategorized")
             .collect()
     }

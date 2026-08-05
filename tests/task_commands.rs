@@ -518,6 +518,117 @@ fn same_task_name_across_categories_with_no_context_reaches_the_disambiguation_p
 }
 
 #[test]
+fn add_sets_a_description_and_show_displays_it() {
+    let trt = Trt::new();
+    trt.ok(&["category", "add", "Work"]);
+    trt.ok(&[
+        "add",
+        "Buy milk",
+        "--category",
+        "Work",
+        "--description",
+        "2%, not whole",
+    ]);
+
+    let out = trt.ok(&["show", "Buy milk", "--category", "Work"]);
+    assert!(out.contains("Description: 2%, not whole"), "{out}");
+
+    // Omitting --description leaves it unset, shown explicitly as "(none)"
+    // rather than an absent line - `show` is a detail view, so its whole
+    // job is to answer "what is this task's description?" definitively.
+    trt.ok(&["add", "Walk dog", "--category", "Work"]);
+    let out = trt.ok(&["show", "Walk dog", "--category", "Work"]);
+    assert!(out.contains("Description: (none)"), "{out}");
+}
+
+#[test]
+fn update_can_set_and_clear_a_tasks_description_independently_of_the_title() {
+    let trt = Trt::new();
+    trt.ok(&["category", "add", "Work"]);
+    trt.ok(&["add", "Buy milk", "--category", "Work"]);
+
+    trt.ok(&[
+        "update",
+        "Buy milk",
+        "--category",
+        "Work",
+        "--description",
+        "Whole milk",
+    ]);
+    let out = trt.ok(&["show", "Buy milk", "--category", "Work"]);
+    assert!(out.contains("Description: Whole milk"), "{out}");
+
+    // Renaming alone (no --description) leaves the description untouched -
+    // the whole point of the "double option" plumbing behind this command.
+    trt.ok(&[
+        "update",
+        "Buy milk",
+        "--category",
+        "Work",
+        "--to",
+        "Buy oat milk",
+    ]);
+    let out = trt.ok(&["show", "Buy oat milk", "--category", "Work"]);
+    assert!(out.contains("Description: Whole milk"), "{out}");
+
+    // Clearing back to empty requires the explicit flag.
+    trt.ok(&[
+        "update",
+        "Buy oat milk",
+        "--category",
+        "Work",
+        "--clear-description",
+    ]);
+    let out = trt.ok(&["show", "Buy oat milk", "--category", "Work"]);
+    assert!(out.contains("Description: (none)"), "{out}");
+}
+
+#[test]
+fn update_with_no_fields_at_all_is_a_clean_error() {
+    let trt = Trt::new();
+    trt.ok(&["category", "add", "Work"]);
+    trt.ok(&["add", "Buy milk", "--category", "Work"]);
+
+    // Neither --to, --description, nor --clear-description: there is
+    // nothing to update, and that is refused rather than silently
+    // succeeding with a misleading "updated" message.
+    let err = trt.fail(&["update", "Buy milk", "--category", "Work"]);
+    assert!(err.contains("nothing to update"), "{err}");
+}
+
+/// Backend parity for the description field: everything above runs against
+/// the default JSON backend, this repeats the round trip against SQLite -
+/// `save`/`load` are what actually persist the column, and only one backend
+/// being exercised is how the SQLite foreign-key bug shipped previously.
+#[test]
+fn task_description_round_trips_through_the_sqlite_backend() {
+    let trt = Trt::new();
+    trt.ok(&["config", "set", "storage.type=sqlite"]);
+    trt.ok(&["category", "add", "Work"]);
+    trt.ok(&[
+        "add",
+        "Buy milk",
+        "--category",
+        "Work",
+        "--description",
+        "2%, not whole",
+    ]);
+
+    let out = trt.ok(&["show", "Buy milk", "--category", "Work"]);
+    assert!(out.contains("Description: 2%, not whole"), "{out}");
+
+    trt.ok(&[
+        "update",
+        "Buy milk",
+        "--category",
+        "Work",
+        "--clear-description",
+    ]);
+    let out = trt.ok(&["show", "Buy milk", "--category", "Work"]);
+    assert!(out.contains("Description: (none)"), "{out}");
+}
+
+#[test]
 fn task_lifecycle_end_to_end_with_sqlite_backend() {
     let trt = Trt::new();
     trt.ok(&["config", "set", "storage.type=sqlite"]);

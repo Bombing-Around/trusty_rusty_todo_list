@@ -60,6 +60,9 @@ pub enum Commands {
         /// Priority level
         #[arg(short = 'p', long = "priority")]
         priority: Option<Priority>,
+        /// Description of the task
+        #[arg(short = 'd', long = "description")]
+        description: Option<String>,
     },
     /// Delete a task
     Delete {
@@ -72,12 +75,39 @@ pub enum Commands {
         category: Option<String>,
     },
     /// Update a task
+    ///
+    /// At least one of `--to`, `--description`, or `--clear-description`
+    /// must be given - there is otherwise nothing to update.
     Update {
         /// Title or ID of the task
         title_or_id: String,
-        /// New title for the task
+        /// New title for the task. Omit to leave the title unchanged and
+        /// update only the description.
         #[arg(short = 't', long = "to")]
-        new_title: String,
+        new_title: Option<String>,
+        /// Category name or ID. Omit to search the current category context,
+        /// or every category if no context is set (prompting if the title is
+        /// ambiguous).
+        #[arg(short = 'c', long = "category")]
+        category: Option<String>,
+        /// New description for the task
+        #[arg(
+            short = 'd',
+            long = "description",
+            conflicts_with = "clear_description"
+        )]
+        description: Option<String>,
+        /// Clear the task's description back to empty
+        ///
+        /// Explicit rather than inferred from an empty `--description ""`,
+        /// so a description is never cleared by accident.
+        #[arg(long = "clear-description")]
+        clear_description: bool,
+    },
+    /// Show full details of a task, including its description
+    Show {
+        /// Title or ID of the task
+        title_or_id: String,
         /// Category name or ID. Omit to search the current category context,
         /// or every category if no context is set (prompting if the title is
         /// ambiguous).
@@ -190,6 +220,9 @@ pub enum CategoryCommands {
     Add {
         /// Name of the category
         name: String,
+        /// Description of the category
+        #[arg(short = 'd', long = "description")]
+        description: Option<String>,
     },
     /// Delete a category
     Delete {
@@ -199,12 +232,29 @@ pub enum CategoryCommands {
         #[arg(short = 'n', long = "new-category")]
         new_category: Option<String>,
     },
-    /// Update a category name
+    /// Update a category's name and/or description
+    ///
+    /// At least one of `new_name`, `--description`, or `--clear-description`
+    /// must be given - there is otherwise nothing to update.
     Update {
         /// Old category name
         old_name: String,
-        /// New category name
-        new_name: String,
+        /// New category name. Omit to leave the name unchanged and update
+        /// only the description.
+        new_name: Option<String>,
+        /// New description for the category
+        #[arg(
+            short = 'd',
+            long = "description",
+            conflicts_with = "clear_description"
+        )]
+        description: Option<String>,
+        /// Clear the category's description back to empty
+        ///
+        /// Explicit rather than inferred from an empty `--description ""`,
+        /// so a description is never cleared by accident.
+        #[arg(long = "clear-description")]
+        clear_description: bool,
     },
     /// List all categories
     List,
@@ -344,10 +394,12 @@ mod tests {
                 title,
                 category,
                 priority,
+                description,
             } => {
                 assert_eq!(title, "Buy milk");
                 assert_eq!(category, Some("Home".to_string()));
                 assert!(priority.is_none());
+                assert!(description.is_none());
             }
             _ => panic!("Expected Add command"),
         }
@@ -360,15 +412,17 @@ mod tests {
                 title,
                 category,
                 priority,
+                description,
             } => {
                 assert_eq!(title, "Buy milk");
                 assert!(category.is_none());
                 assert!(priority.is_none());
+                assert!(description.is_none());
             }
             _ => panic!("Expected Add command"),
         }
 
-        // Test with priority
+        // Test with priority and description
         let cli = parse_args(&[
             "trt",
             "add",
@@ -377,18 +431,93 @@ mod tests {
             "Home",
             "--priority",
             "high",
+            "--description",
+            "2%, not whole",
         ]);
         match cli.command {
             Commands::Add {
                 title,
                 category,
                 priority,
+                description,
             } => {
                 assert_eq!(title, "Buy milk");
                 assert_eq!(category, Some("Home".to_string()));
                 assert_eq!(priority, Some(Priority::High));
+                assert_eq!(description, Some("2%, not whole".to_string()));
             }
             _ => panic!("Expected Add command"),
+        }
+    }
+
+    #[test]
+    fn test_update_task() {
+        // The new title alone.
+        let cli = parse_args(&["trt", "update", "Buy milk", "--to", "Buy oat milk"]);
+        match cli.command {
+            Commands::Update {
+                title_or_id,
+                new_title,
+                category,
+                description,
+                clear_description,
+            } => {
+                assert_eq!(title_or_id, "Buy milk");
+                assert_eq!(new_title, Some("Buy oat milk".to_string()));
+                assert!(category.is_none());
+                assert!(description.is_none());
+                assert!(!clear_description);
+            }
+            _ => panic!("Expected Update command"),
+        }
+
+        // `--to` is optional: a description-only update parses cleanly.
+        let cli = parse_args(&["trt", "update", "Buy milk", "--description", "Unsweetened"]);
+        match cli.command {
+            Commands::Update {
+                new_title,
+                description,
+                ..
+            } => {
+                assert!(new_title.is_none());
+                assert_eq!(description, Some("Unsweetened".to_string()));
+            }
+            _ => panic!("Expected Update command"),
+        }
+
+        // `--clear-description` needs no value.
+        let cli = parse_args(&["trt", "update", "Buy milk", "--clear-description"]);
+        match cli.command {
+            Commands::Update {
+                clear_description, ..
+            } => assert!(clear_description),
+            _ => panic!("Expected Update command"),
+        }
+
+        // `--description` and `--clear-description` contradict each other.
+        assert!(try_parse_args(&[
+            "trt",
+            "update",
+            "Buy milk",
+            "--description",
+            "x",
+            "--clear-description",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn test_show_task() {
+        let cli = parse_args(&["trt", "show", "Buy milk", "--category", "Home"]);
+        match cli.command {
+            Commands::Show {
+                title_or_id,
+                category,
+            } => {
+                assert_eq!(title_or_id, "Buy milk");
+                assert_eq!(category, Some("Home".to_string()));
+            }
+            _ => panic!("Expected Show command"),
         }
     }
 
@@ -456,6 +585,111 @@ mod tests {
             },
             _ => panic!("Expected Category command"),
         }
+    }
+
+    #[test]
+    fn test_category_add_command() {
+        let cli = parse_args(&["trt", "category", "add", "Work"]);
+        match cli.command {
+            Commands::Category { command } => match command {
+                CategoryCommands::Add { name, description } => {
+                    assert_eq!(name, "Work");
+                    assert!(description.is_none());
+                }
+                _ => panic!("Expected Category Add command"),
+            },
+            _ => panic!("Expected Category command"),
+        }
+
+        let cli = parse_args(&[
+            "trt",
+            "category",
+            "add",
+            "Work",
+            "--description",
+            "Job stuff",
+        ]);
+        match cli.command {
+            Commands::Category { command } => match command {
+                CategoryCommands::Add { name, description } => {
+                    assert_eq!(name, "Work");
+                    assert_eq!(description, Some("Job stuff".to_string()));
+                }
+                _ => panic!("Expected Category Add command"),
+            },
+            _ => panic!("Expected Category command"),
+        }
+    }
+
+    #[test]
+    fn test_category_update_command() {
+        // Renaming alone still parses, `new_name` having become optional.
+        let cli = parse_args(&["trt", "category", "update", "Home", "Personal"]);
+        match cli.command {
+            Commands::Category { command } => match command {
+                CategoryCommands::Update {
+                    old_name,
+                    new_name,
+                    description,
+                    clear_description,
+                } => {
+                    assert_eq!(old_name, "Home");
+                    assert_eq!(new_name, Some("Personal".to_string()));
+                    assert!(description.is_none());
+                    assert!(!clear_description);
+                }
+                _ => panic!("Expected Category Update command"),
+            },
+            _ => panic!("Expected Category command"),
+        }
+
+        // A description-only update, with no new name.
+        let cli = parse_args(&[
+            "trt",
+            "category",
+            "update",
+            "Home",
+            "--description",
+            "Household chores",
+        ]);
+        match cli.command {
+            Commands::Category { command } => match command {
+                CategoryCommands::Update {
+                    new_name,
+                    description,
+                    ..
+                } => {
+                    assert!(new_name.is_none());
+                    assert_eq!(description, Some("Household chores".to_string()));
+                }
+                _ => panic!("Expected Category Update command"),
+            },
+            _ => panic!("Expected Category command"),
+        }
+
+        // `--clear-description` needs no value.
+        let cli = parse_args(&["trt", "category", "update", "Home", "--clear-description"]);
+        match cli.command {
+            Commands::Category { command } => match command {
+                CategoryCommands::Update {
+                    clear_description, ..
+                } => assert!(clear_description),
+                _ => panic!("Expected Category Update command"),
+            },
+            _ => panic!("Expected Category command"),
+        }
+
+        // `--description` and `--clear-description` contradict each other.
+        assert!(try_parse_args(&[
+            "trt",
+            "category",
+            "update",
+            "Home",
+            "--description",
+            "x",
+            "--clear-description",
+        ])
+        .is_err());
     }
 
     #[test]

@@ -281,10 +281,31 @@ impl<'a> TaskManager<'a> {
         Ok(self.storage.purge_deleted_tasks(days_threshold)?)
     }
 
-    pub fn rename_task(&self, mut task: Task, new_title: String) -> Result<(), TaskManagerError> {
-        task.update_title(new_title)?;
-        self.storage.update_task(task)?;
-        Ok(())
+    /// Applies whichever of the CLI's `update` fields were actually given, in
+    /// a single storage write, and hands back the resulting task so the
+    /// caller can report on it without a second lookup.
+    ///
+    /// `new_description` is a "double option": `None` leaves the description
+    /// untouched, `Some(None)` clears it, and `Some(Some(text))` replaces it.
+    /// A single `Option<String>` could not tell "leave alone" apart from
+    /// "clear" - both would be `None` - which is exactly the accidental
+    /// clearing the CLI's explicit `--clear-description` flag exists to rule
+    /// out; see `main::resolve_description_update`, which is the only thing
+    /// that constructs this parameter.
+    pub fn update_task(
+        &self,
+        mut task: Task,
+        new_title: Option<String>,
+        new_description: Option<Option<String>>,
+    ) -> Result<Task, TaskManagerError> {
+        if let Some(title) = new_title {
+            task.update_title(title)?;
+        }
+        if let Some(description) = new_description {
+            task.set_description(description);
+        }
+        self.storage.update_task(task.clone())?;
+        Ok(task)
     }
 
     pub fn set_completed(&self, mut task: Task, completed: bool) -> Result<(), TaskManagerError> {
@@ -894,6 +915,62 @@ mod tests {
         assert!(work_tasks[0].completed);
         let home_tasks = storage.get_tasks_by_category(2).unwrap();
         assert!(!home_tasks[0].completed);
+    }
+
+    #[test]
+    fn update_task_can_rename_and_set_a_description_together() {
+        let test_storage = TestStorage::new();
+        let storage = test_storage.storage();
+        let manager = TaskManager::new(storage);
+        let id = add(storage, "Buy milk", 0, Priority::Medium);
+        let task = storage.get_task(id).unwrap().unwrap();
+
+        let updated = manager
+            .update_task(
+                task,
+                Some("Buy oat milk".to_string()),
+                Some(Some("Unsweetened".to_string())),
+            )
+            .unwrap();
+
+        assert_eq!(updated.title, "Buy oat milk");
+        assert_eq!(updated.description.as_deref(), Some("Unsweetened"));
+
+        let stored = storage.get_task(id).unwrap().unwrap();
+        assert_eq!(stored.title, "Buy oat milk");
+        assert_eq!(stored.description.as_deref(), Some("Unsweetened"));
+    }
+
+    /// The "double option" on `new_description` is what makes clearing a
+    /// description an explicit act rather than an accidental side effect of
+    /// leaving `--description` off: `None` here leaves the field untouched,
+    /// while `Some(None)` is the only thing that clears it.
+    #[test]
+    fn update_task_clears_a_description_only_when_explicitly_told_to() {
+        let test_storage = TestStorage::new();
+        let storage = test_storage.storage();
+        let manager = TaskManager::new(storage);
+        let id = TaskManager::new(storage)
+            .add_task(
+                "Buy milk".to_string(),
+                0,
+                Priority::Medium,
+                Some("Whole milk".to_string()),
+            )
+            .unwrap();
+
+        // Renaming without mentioning the description leaves it alone.
+        let task = storage.get_task(id).unwrap().unwrap();
+        let updated = manager
+            .update_task(task, Some("Buy 2% milk".to_string()), None)
+            .unwrap();
+        assert_eq!(updated.description.as_deref(), Some("Whole milk"));
+
+        // Explicitly clearing it does.
+        let task = storage.get_task(id).unwrap().unwrap();
+        let updated = manager.update_task(task, None, Some(None)).unwrap();
+        assert_eq!(updated.description, None);
+        assert_eq!(updated.title, "Buy 2% milk");
     }
 
     #[test]

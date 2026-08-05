@@ -123,6 +123,17 @@ pub enum CliError {
         "position must be at least 1 (positions are 1-based; 0 is reserved for Uncategorized)"
     )]
     InvalidCategoryPosition,
+    /// Both `update` commands (task and category) accept several optional
+    /// fields (a new name/title, `--description`, `--clear-description`)
+    /// rather than one mandatory one, so an invocation naming none of them
+    /// has nothing to do. Silently succeeding would print a misleading
+    /// "renamed"/"updated" line for an invocation that changed nothing;
+    /// refusing costs one re-run and says so.
+    #[error(
+        "nothing to update: give a new name/title and/or --description, or pass \
+         --clear-description"
+    )]
+    NothingToUpdate,
 }
 
 fn main() {
@@ -519,8 +530,8 @@ fn run_category_command(
     let mut manager = CategoryManager::new(storage);
 
     match command {
-        CategoryCommands::Add { name } => {
-            let id = manager.add_category(name.clone(), None)?;
+        CategoryCommands::Add { name, description } => {
+            let id = manager.add_category(name.clone(), description)?;
             println!("Category '{}' added with ID {}", name, id);
         }
         CategoryCommands::Delete { name, new_category } => {
@@ -543,11 +554,25 @@ fn run_category_command(
                 ),
             }
         }
-        CategoryCommands::Update { old_name, new_name } => {
+        CategoryCommands::Update {
+            old_name,
+            new_name,
+            description,
+            clear_description,
+        } => {
+            if new_name.is_none() && description.is_none() && !clear_description {
+                return Err(CliError::NothingToUpdate);
+            }
             let category = resolve_category(&manager, &old_name)?;
-            manager.update_category(category.id, new_name.clone())?;
-            println!("Category '{}' renamed to '{}'", category.name, new_name);
-            carry_default_category_across_rename(config_manager, &category.name, &new_name)?;
+            let description_update = resolve_description_update(description, clear_description);
+            manager.update_category(category.id, new_name.clone(), description_update)?;
+            match &new_name {
+                Some(new_name) => {
+                    println!("Category '{}' renamed to '{}'", category.name, new_name);
+                    carry_default_category_across_rename(config_manager, &category.name, new_name)?;
+                }
+                None => println!("Category '{}' updated", category.name),
+            }
         }
         CategoryCommands::List => {
             let current = manager.get_current_category();
@@ -558,7 +583,11 @@ fn run_category_command(
                 } else {
                     ""
                 };
-                println!("{}: {}{}", category.id, category.name, marker);
+                let description = category.description.as_deref().unwrap_or("(none)");
+                println!(
+                    "{}: {}{} (description: {})",
+                    category.id, category.name, marker, description
+                );
             }
         }
         CategoryCommands::Use { category } => {
@@ -755,6 +784,24 @@ fn to_model_priority(priority: cli::Priority) -> Priority {
         cli::Priority::High => Priority::High,
         cli::Priority::Medium => Priority::Medium,
         cli::Priority::Low => Priority::Low,
+    }
+}
+
+/// Turns the `update` commands' `--description`/`--clear-description` pair
+/// into the "double option" `CategoryManager::update_category` and
+/// `TaskManager::update_task` both expect: `None` means "leave the
+/// description alone", `Some(None)` means "clear it", and `Some(Some(text))`
+/// means "replace it".
+///
+/// The CLI already refuses `--description` and `--clear-description`
+/// together (see their `conflicts_with` in `cli.rs`), so `clear` is only
+/// ever `true` when `description` is `None` - this does not need to decide
+/// which one wins.
+fn resolve_description_update(description: Option<String>, clear: bool) -> Option<Option<String>> {
+    if clear {
+        Some(None)
+    } else {
+        description.map(Some)
     }
 }
 
@@ -970,13 +1017,14 @@ fn run_task_command(
             title,
             category,
             priority,
+            description,
         } => {
             let category_id = resolve_add_category(&category_manager, config_manager, category)?;
             let priority = match priority {
                 Some(p) => to_model_priority(p),
                 None => resolve_default_priority(config_manager)?,
             };
-            let id = task_manager.add_task(title.clone(), category_id, priority, None)?;
+            let id = task_manager.add_task(title.clone(), category_id, priority, description)?;
             // Always name the category that was actually used, even when the
             // user did not: with `--category` now optional, the confirmation
             // line is how they find out which of the four resolution steps
@@ -1000,12 +1048,42 @@ fn run_task_command(
             title_or_id,
             new_title,
             category,
+            description,
+            clear_description,
         } => {
+            if new_title.is_none() && description.is_none() && !clear_description {
+                return Err(CliError::NothingToUpdate);
+            }
             let scope = resolve_task_scope(&category_manager, category)?;
             let task = task_manager.resolve_task(&title_or_id, scope, prompter)?;
             let old_title = task.title.clone();
-            task_manager.rename_task(task, new_title.clone())?;
-            println!("Task '{}' renamed to '{}'", old_title, new_title);
+            let description_update = resolve_description_update(description, clear_description);
+            let updated = task_manager.update_task(task, new_title.clone(), description_update)?;
+            match new_title {
+                Some(new_title) => println!("Task '{}' renamed to '{}'", old_title, new_title),
+                None => println!("Task '{}' updated", updated.title),
+            }
+        }
+        Commands::Show {
+            title_or_id,
+            category,
+        } => {
+            let scope = resolve_task_scope(&category_manager, category)?;
+            let task = task_manager.resolve_task(&title_or_id, scope, prompter)?;
+            let category_name = category_display_name(&category_manager, task.category_id)?;
+            let status = if task.completed {
+                "[x] completed"
+            } else {
+                "[ ] incomplete"
+            };
+            println!("Task #{}: {}", task.id, task.title);
+            println!("  Status: {}", status);
+            println!("  Priority: {}", task.priority.to_str());
+            println!("  Category: {}", category_name);
+            println!(
+                "  Description: {}",
+                task.description.as_deref().unwrap_or("(none)")
+            );
         }
         Commands::Check {
             title_or_id,
