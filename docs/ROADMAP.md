@@ -20,8 +20,11 @@ between each other, categories have a persistent context and an explicit
 order, deletion is soft and reversible, config has defaults, validation, and a
 first-run offer.
 
-What that leaves is a CLI nobody can install and a data model carrying fields
-the CLI never exposes.
+What that leaves is a CLI nobody can install. The data model no longer
+carries fields the CLI never exposes — `description` is reachable as of #55,
+and `due_date` is phase 2's whole subject. `Task.order` is the one field
+still stored and untouched by any command, deliberately: see "Deliberately
+not filed" below.
 
 ---
 
@@ -44,6 +47,10 @@ has never run on, from a manifest that does not say what license they are
 under, is publishing guesses. Its prerequisites are now all in place — what it
 is waiting on is a decision about what a release contains, not more groundwork.
 
+One thing now sits in front of it that did not before: the MSRV floor, below.
+Both of that section's halves — the `rusqlite` code break and the toolchain
+bump — are cheaper to do before there is a published install story than after.
+
 Two things the release-engineering pass settled that are worth not
 re-litigating:
 
@@ -52,6 +59,11 @@ re-litigating:
   unreachable: the committed `Cargo.lock` is lockfile v4, which no Cargo
   before 1.78 can parse. Lowering the floor means regenerating the lockfile
   in the older format, which is a deliberate choice and not a free one.
+
+  **This has since expired — see "The MSRV floor" below.** It was true when
+  written and is kept here because the reasoning still explains why the
+  number is 1.78 rather than 1.70. It no longer explains why it should
+  *stay* there.
 - **The test count is reported, never enforced.** A hard failure on a
   decreasing count also fires on legitimate consolidation, and a check people
   learn to override is worse than no check. The direction of the number is the
@@ -68,6 +80,59 @@ re-litigating:
   no PATH collision; the clash is only over the crates.io namespace.
   `trusty_rusty_todo_list` was unregistered when this was written, and saying
   so reserves nothing — publishing is the only thing that holds a name.
+
+## The MSRV floor
+
+The lockfile argument above no longer decides this. Dependencies now genuinely
+require more than 1.78, and the question has changed from "what can the
+lockfile parse" to "do we keep taking dependency updates at all".
+
+What forced it was the `rusqlite` 0.30 → 0.40 bump, #66. That pull request
+fails two independent ways, and they are worth keeping apart:
+
+- **Code.** Five `E0277` errors on `Row::get`'s `FromSql` bound — `u64` is no
+  longer an implementing type. Real API break across ten majors, fixable in
+  one file, nothing to do with the toolchain. The `DateTime` columns are
+  hand-parsed from `String` anyway, so whether the `chrono` feature still
+  earns its place is worth asking at the same time.
+- **Toolchain.** Something in the resulting tree uses edition 2024, which
+  Cargo 1.78 cannot parse at all. That is a hard capability gate, not an
+  advisory `rust-version` that can be ignored.
+
+Two facts make this bigger than one dependency:
+
+- **`rusqlite` declares no `rust-version`, in any version from 0.30 through
+  0.40.** It never states its floor, so Cargo's MSRV-aware version selection
+  — which only holds back crates that declare one — can never protect this
+  project from it. The 1.78 floor was being enforced by the CI job and
+  nothing else.
+- **It is not only `rusqlite`.** The lockfile currently carries clap 4.5, and
+  **clap 4.6.0 declares `rust-version = "1.85"`**. The next clap minor does
+  the same thing. This is the ecosystem-wide edition-2024 wave, not one
+  crate's choice.
+
+So holding 1.78 means pinning clap, pinning `rusqlite`, and declining
+dependency updates generally — a security-maintenance position, not merely a
+compatibility one, on the crate that parses untrusted input.
+
+**What raising it actually costs here is small**, and smaller than the same
+decision would be for a library. There is no lib target, so there are no
+downstream compilers to break — MSRV as a semver-adjacent promise does not
+apply. The floor gates exactly one group: people building from source against
+a system toolchain rather than rustup. That group nearly vanishes once #44
+ships prebuilt binaries, which is the ordering argument: **raising the floor
+before there is a published install story is cheap, and raising it after is
+not.** Do this ahead of #44, not behind it.
+
+**The policy, so this is not re-argued on every Dependabot pull request: the
+MSRV is an output, not an input.** Declare whatever the dependencies actually
+require, keep the CI job that proves the declared number is true, and treat a
+raise as an ordinary consequence of a bump rather than an event needing its
+own decision. This matches what was already decided about the test count —
+reported, never enforced — and the reason the MSRV job exists at all, which
+is to stop the number drifting into another claim nobody checks. The
+alternative, a pinned floor that gets defended, is really a growing set of
+pinned crates that also get defended.
 
 ## Phase 2 — dates and times
 
@@ -115,13 +180,38 @@ behind it.
 
 | Issue | What |
 | --- | --- |
-| #54 | `list` ignores the category context and cannot be scoped to a category, while every other task command honours it. |
-| #55 | `description` is persisted on tasks and categories, threaded through the manager APIs, and can never be set. |
+| ~~#54~~ | **Landed.** `list` honours the category context via `has_explicit_category_context()`, gained `--category` and `--all`, and names the category it narrowed to. Filtering is one pass over `live_tasks()` in `TaskManager`. |
+| ~~#55~~ | **Landed.** `description` is reachable on tasks and categories: set at creation, edited on `update`, blanked only by `--clear-description`, and shown by the new `trt show` and in `category list`. |
 | ~~#56~~ | **Landed.** Eighteen blanket `#[allow(dead_code)]` markers removed, and the fourteen unreachable items behind them deleted. `src/` now has none; keep it that way — a blanket marker on an `impl` block is how the previous fourteen went unnoticed. |
+| ~~#70~~ | **Landed.** `validate_storage_path` asks `faccessat`/`AT_EACCESS` whether the calling process can write, instead of reading the owner's mode bit — which passed `/` for every user and so rejected almost nothing. Windows remains a no-op, now documented as deliberate rather than a silent `cfg` gap. |
 
-#56 shifted #54 slightly: the two unused storage combinators it cited as
-evidence are gone, so `list --category` starts from a smaller surface rather
-than an existing-but-unused one.
+Three decisions these settled, each of which the issue left genuinely open:
+
+- **`list` narrows silently, but says so.** The argument against — that a
+  context set days ago hides tasks and loses one — is answered by the header
+  naming the category, the same way `add` names the category it resolved.
+  `--all` is the escape hatch alongside `category clear`.
+- **`description` was exposed rather than removed.** Removal reads simpler
+  and is not: dropping a column means a SQLite schema step, and
+  `SCHEMA_VERSION` is a guard rail with one hand-written migration behind it,
+  not a migration system.
+- **Blanking a description needs `--clear-description`.** An empty
+  `--description ""` deliberately does not do it, so a description is never
+  lost by accident. Making that work required `update --to` and
+  `category update <new_name>` to become optional, so an edit that changes
+  only a description does not have to rename anything; both now refuse an
+  invocation that names no field at all rather than printing a misleading
+  "updated".
+
+Two follow-ups these left behind, neither filed yet:
+
+- **`list --category` has no `-c` short form**, because `-c` on `list` was
+  already `--completed`. Every other task command spells category `-c`, so
+  `trt list -c Work` does not do what muscle memory expects.
+- **`ConfigManager::stored_config` panics on any config read error**
+  (`self.storage.load().unwrap()`). Pointing `--config` at a directory
+  produces a Rust backtrace instead of an error message. Predates all of the
+  above.
 
 ## Standing backlog
 
