@@ -116,11 +116,16 @@ fn category_add_sets_a_description_and_list_shows_it() {
     let out = trt.ok(&["category", "list"]);
     assert!(out.contains("Work (description: Job stuff)"), "{out}");
 
-    // Omitting --description leaves it unset, shown explicitly as "(none)"
-    // rather than an absent column.
+    // Omitting --description leaves it unset, and an unset description
+    // contributes nothing to the line rather than a "(none)" placeholder -
+    // `category list` is a scan, so a row with no description says nothing
+    // about one.
     trt.ok(&["category", "add", "Home"]);
     let out = trt.ok(&["category", "list"]);
-    assert!(out.contains("Home (description: (none))"), "{out}");
+    assert!(
+        out.lines().any(|line| line.trim_end() == "2: Home"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -137,10 +142,14 @@ fn category_update_can_set_and_clear_a_description_independently_of_the_name() {
     let out = trt.ok(&["category", "list"]);
     assert!(out.contains("Werk (description: Job stuff)"), "{out}");
 
-    // Clearing back to empty requires the explicit flag.
+    // Clearing back to empty requires the explicit flag, and leaves the line
+    // carrying no description segment at all.
     trt.ok(&["category", "update", "Werk", "--clear-description"]);
     let out = trt.ok(&["category", "list"]);
-    assert!(out.contains("Werk (description: (none))"), "{out}");
+    assert!(
+        out.lines().any(|line| line.trim_end() == "1: Werk"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -168,7 +177,10 @@ fn category_description_round_trips_through_the_sqlite_backend() {
 
     trt.ok(&["category", "update", "Work", "--clear-description"]);
     let out = trt.ok(&["category", "list"]);
-    assert!(out.contains("Work (description: (none))"), "{out}");
+    assert!(
+        out.lines().any(|line| line.trim_end() == "1: Work"),
+        "{out}"
+    );
 }
 
 /// Renaming the category that `default-category` names must carry the
@@ -313,11 +325,7 @@ fn category_order_changes_list_position() {
     let out = list_order(&trt.ok(&["category", "list"]));
     assert_eq!(
         out,
-        vec![
-            "0: Uncategorized (current) (description: (none))",
-            "1: Work (description: (none))",
-            "2: Home (description: (none))"
-        ]
+        vec!["0: Uncategorized (current)", "1: Work", "2: Home"]
     );
 
     // Move Home ahead of Work.
@@ -330,11 +338,7 @@ fn category_order_changes_list_position() {
     let out = list_order(&trt.ok(&["category", "list"]));
     assert_eq!(
         out,
-        vec![
-            "0: Uncategorized (current) (description: (none))",
-            "2: Home (description: (none))",
-            "1: Work (description: (none))"
-        ]
+        vec!["0: Uncategorized (current)", "2: Home", "1: Work"]
     );
 }
 
@@ -348,11 +352,7 @@ fn category_order_works_by_id() {
     let out = list_order(&trt.ok(&["category", "list"]));
     assert_eq!(
         out,
-        vec![
-            "0: Uncategorized (current) (description: (none))",
-            "2: Home (description: (none))",
-            "1: Work (description: (none))"
-        ]
+        vec!["0: Uncategorized (current)", "2: Home", "1: Work"]
     );
 }
 
@@ -373,10 +373,10 @@ fn category_reorder_sets_several_at_once() {
     assert_eq!(
         out,
         vec![
-            "0: Uncategorized (current) (description: (none))",
-            "3: Errands (description: (none))",
-            "2: Home (description: (none))",
-            "1: Work (description: (none))"
+            "0: Uncategorized (current)",
+            "3: Errands",
+            "2: Home",
+            "1: Work"
         ]
     );
 }
@@ -398,10 +398,10 @@ fn category_reorder_partial_list_leaves_others_where_they_were() {
     assert_eq!(
         out,
         vec![
-            "0: Uncategorized (current) (description: (none))",
-            "3: Errands (description: (none))",
-            "1: Work (description: (none))",
-            "2: Home (description: (none))"
+            "0: Uncategorized (current)",
+            "3: Errands",
+            "1: Work",
+            "2: Home"
         ]
     );
 }
@@ -449,11 +449,7 @@ fn category_order_persists_with_sqlite_backend() {
     let out = list_order(&trt.ok(&["category", "list"]));
     assert_eq!(
         out,
-        vec![
-            "0: Uncategorized (current) (description: (none))",
-            "2: Home (description: (none))",
-            "1: Work (description: (none))"
-        ]
+        vec!["0: Uncategorized (current)", "2: Home", "1: Work"]
     );
 }
 
@@ -472,10 +468,10 @@ fn category_reorder_persists_with_sqlite_backend() {
     assert_eq!(
         out,
         vec![
-            "0: Uncategorized (current) (description: (none))",
-            "3: Errands (description: (none))",
-            "2: Home (description: (none))",
-            "1: Work (description: (none))"
+            "0: Uncategorized (current)",
+            "3: Errands",
+            "2: Home",
+            "1: Work"
         ]
     );
 }

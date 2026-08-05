@@ -583,9 +583,19 @@ fn run_category_command(
                 } else {
                     ""
                 };
-                let description = category.description.as_deref().unwrap_or("(none)");
+                // A category without a description contributes nothing here
+                // rather than a "(none)" placeholder. `category list` is a
+                // scan, and most categories will never carry a description -
+                // appending an empty field to every row costs width on every
+                // line to say that a row has nothing to say. The detail views
+                // are where an absent value is worth stating explicitly,
+                // because there the user asked about that specific record.
+                let description = match &category.description {
+                    Some(description) => format!(" (description: {description})"),
+                    None => String::new(),
+                };
                 println!(
-                    "{}: {}{} (description: {})",
+                    "{}: {}{}{}",
                     category.id, category.name, marker, description
                 );
             }
