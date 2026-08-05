@@ -76,8 +76,8 @@ without a TTY, and why nothing hangs in CI.
 
 **Soft deletion is a `deleted_at` timestamp, not a magic category.** A deleted
 task keeps its real `category_id` so restore is lossless. `live_tasks()` excludes
-them; `get_deleted_tasks()` returns them. `list`/`search` must go through
-`live_tasks()`.
+them; `get_deleted_tasks()` returns them. `list` (there is no separate `search`
+command - `--search` is one of `list`'s filters) must go through `live_tasks()`.
 
 **Each storage backend owns its own file** inside the `storage.path` *directory*
 (`trt-data.json`, `trt-data.db`). They must never point at the same path.

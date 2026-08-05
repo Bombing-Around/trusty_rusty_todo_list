@@ -282,6 +282,83 @@ fn list_filters_by_search_completed_and_priority() {
     assert!(!out.contains("Buy milk"), "{out}");
 }
 
+/// With no `category use` context set, `list` shows every category - the
+/// context-clear path.
+#[test]
+fn list_with_no_context_shows_every_category() {
+    let trt = Trt::new();
+    trt.ok(&["category", "add", "Work"]);
+    trt.ok(&["category", "add", "Home"]);
+    trt.ok(&["add", "Work task", "--category", "Work"]);
+    trt.ok(&["add", "Home task", "--category", "Home"]);
+
+    let out = trt.ok(&["list"]);
+    assert!(out.starts_with("Tasks:\n"), "{out}");
+    assert!(out.contains("Work task"), "{out}");
+    assert!(out.contains("Home task"), "{out}");
+}
+
+/// The context-set path: `category use` narrows a bare `list` to that
+/// category, and the header names it - matching `add`'s existing practice of
+/// naming the category it actually used.
+#[test]
+fn list_narrows_to_the_category_context_and_names_it() {
+    let trt = Trt::new();
+    trt.ok(&["category", "add", "Work"]);
+    trt.ok(&["category", "add", "Home"]);
+    trt.ok(&["add", "Work task", "--category", "Work"]);
+    trt.ok(&["add", "Home task", "--category", "Home"]);
+
+    trt.ok(&["category", "use", "Work"]);
+    let out = trt.ok(&["list"]);
+    assert!(out.starts_with("Tasks in category 'Work':\n"), "{out}");
+    assert!(out.contains("Work task"), "{out}");
+    assert!(!out.contains("Home task"), "{out}");
+
+    // An explicit --category overrides the context, same precedence as every
+    // other task command's `--category`.
+    let out = trt.ok(&["list", "--category", "Home"]);
+    assert!(out.starts_with("Tasks in category 'Home':\n"), "{out}");
+    assert!(out.contains("Home task"), "{out}");
+    assert!(!out.contains("Work task"), "{out}");
+
+    // --all ignores the context entirely.
+    let out = trt.ok(&["list", "--all"]);
+    assert!(out.starts_with("Tasks:\n"), "{out}");
+    assert!(out.contains("Work task"), "{out}");
+    assert!(out.contains("Home task"), "{out}");
+
+    // Clearing the context returns a bare `list` to showing everything.
+    trt.ok(&["category", "clear"]);
+    let out = trt.ok(&["list"]);
+    assert!(out.starts_with("Tasks:\n"), "{out}");
+    assert!(out.contains("Work task"), "{out}");
+    assert!(out.contains("Home task"), "{out}");
+}
+
+/// `--category` and `--all` contradict each other and clap rejects the
+/// combination before `main` ever has to reconcile it.
+#[test]
+fn list_rejects_category_and_all_together() {
+    let trt = Trt::new();
+    let err = trt.fail(&["list", "--category", "Work", "--all"]);
+    assert!(err.contains("cannot be used with"), "{err}");
+}
+
+/// Soft-deleted tasks stay hidden from a narrowed `list`, same as an
+/// unscoped one.
+#[test]
+fn list_narrowed_to_a_category_still_excludes_soft_deleted_tasks() {
+    let trt = Trt::new();
+    trt.ok(&["category", "add", "Work"]);
+    trt.ok(&["add", "Buy milk", "--category", "Work"]);
+    trt.ok(&["delete", "Buy milk", "--category", "Work"]);
+
+    trt.ok(&["category", "use", "Work"]);
+    let out = trt.ok(&["list"]);
+    assert!(!out.contains("Buy milk"), "{out}");
+}
+
 #[test]
 fn check_and_uncheck_by_explicit_category_and_by_context() {
     let trt = Trt::new();
@@ -335,7 +412,12 @@ fn check_all_and_uncheck_all_require_and_use_the_category_context() {
     let out = trt.ok(&["check-all"]);
     assert!(out.contains("Checked off 1 task(s)"), "{out}");
 
+    // `list` now honors the same "Work" context `check-all` just acted
+    // under, so a bare `list` only shows what `check-all` could have
+    // touched; `--all` is how the test confirms Home's task was left alone.
     let out = trt.ok(&["list"]);
+    assert!(out.contains("[x] Work task"), "{out}");
+    let out = trt.ok(&["list", "--all"]);
     assert!(out.contains("[x] Work task"), "{out}");
     assert!(out.contains("[ ] Home task"), "{out}");
 
@@ -365,7 +447,12 @@ fn move_simple_syntax_uses_category_context() {
     let out = trt.ok(&["move", "Buy milk", "--to", "Home"]);
     assert!(out.contains("moved to 'Home'"), "{out}");
 
+    // The context is still "Work", and the task just moved out of it, so a
+    // bare `list` no longer shows it - `--all` (or `--category Home`) is
+    // needed to see where it landed.
     let out = trt.ok(&["list"]);
+    assert!(!out.contains("Buy milk"), "{out}");
+    let out = trt.ok(&["list", "--all"]);
     assert!(out.contains("category: Home"), "{out}");
 }
 

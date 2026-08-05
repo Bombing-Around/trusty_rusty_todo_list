@@ -1,4 +1,4 @@
-use crate::models::{Category, Priority, StorageData, StorageError, Task};
+use crate::models::{Category, StorageData, StorageError, Task};
 use std::boxed::Box;
 use std::path::Path;
 
@@ -110,22 +110,6 @@ pub trait Storage {
             .live_tasks()?
             .into_iter()
             .filter(|t| t.category_id == category_id)
-            .collect())
-    }
-
-    fn get_tasks_by_priority(&self, priority: Priority) -> Result<Vec<Task>, StorageError> {
-        Ok(self
-            .live_tasks()?
-            .into_iter()
-            .filter(|t| t.priority == priority)
-            .collect())
-    }
-
-    fn get_completed_tasks(&self) -> Result<Vec<Task>, StorageError> {
-        Ok(self
-            .live_tasks()?
-            .into_iter()
-            .filter(|t| t.completed)
             .collect())
     }
 
@@ -303,22 +287,6 @@ pub trait Storage {
         let data = self.load()?;
         Ok(data.categories)
     }
-
-    fn get_all_tasks(&self) -> Result<Vec<Task>, StorageError> {
-        self.live_tasks()
-    }
-
-    fn get_tasks_by_completion_and_priority(
-        &self,
-        completed: bool,
-        priority: Priority,
-    ) -> Result<Vec<Task>, StorageError> {
-        Ok(self
-            .live_tasks()?
-            .into_iter()
-            .filter(|t| t.completed == completed && t.priority == priority)
-            .collect())
-    }
 }
 
 /// What `migrate_storage` actually did, so the caller can tell the user the
@@ -429,6 +397,7 @@ pub fn create_storage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::Priority;
     use chrono::Utc;
     use tempfile::{NamedTempFile, TempDir};
 
@@ -788,7 +757,7 @@ mod tests {
         // fall back to Uncategorized (ID 0), not deletion.
         manager.delete_category(category_id, None).unwrap();
 
-        let tasks = storage.get_all_tasks().unwrap();
+        let tasks = storage.live_tasks().unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].category_id, UNCATEGORIZED_ID);
         assert!(!tasks[0].is_deleted());
@@ -852,14 +821,14 @@ mod tests {
             .unwrap()
             .is_empty());
         // `get_tasks_by_title` is what task resolution matches names against,
-        // and `get_all_tasks` is what `list` and its `--search` filter read:
+        // and `live_tasks` is what `list` and its `--search` filter read:
         // between them, a soft-deleted task is unreachable by name and absent
         // from every listing.
         assert!(storage
             .get_tasks_by_title("Finish report")
             .unwrap()
             .is_empty());
-        assert!(storage.get_all_tasks().unwrap().is_empty());
+        assert!(storage.live_tasks().unwrap().is_empty());
 
         // get_task is the one exception: it must still be reachable by ID so
         // restore/purge can find it.

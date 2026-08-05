@@ -150,7 +150,12 @@ pub enum Commands {
         #[arg(long = "task")]
         task: Option<String>,
     },
-    /// List all tasks
+    /// List tasks, narrowed to the current category context if one is set
+    ///
+    /// Unlike `Delete`/`Update`/`Check`/`Uncheck`, the category flag here has
+    /// no short form: `-c` is already `--completed` on this command, so
+    /// letter-for-letter consistency with the other task commands loses to
+    /// not silently repurposing an existing flag.
     List {
         /// Search term to filter tasks
         #[arg(short = 's', long = "search")]
@@ -161,6 +166,13 @@ pub enum Commands {
         /// Filter by priority
         #[arg(short = 'p', long = "priority")]
         priority: Option<Priority>,
+        /// Category name or ID. Omit to use the current category context if
+        /// one is set, else every category
+        #[arg(long = "category", conflicts_with = "all")]
+        category: Option<String>,
+        /// List every category, ignoring the current category context
+        #[arg(long = "all")]
+        all: bool,
     },
     /// Category management commands
     Category {
@@ -530,10 +542,14 @@ mod tests {
                 search,
                 completed,
                 priority,
+                category,
+                all,
             } => {
                 assert!(search.is_none());
                 assert!(!completed);
                 assert!(priority.is_none());
+                assert!(category.is_none());
+                assert!(!all);
             }
             _ => panic!("Expected List command"),
         }
@@ -547,19 +563,45 @@ mod tests {
             "--completed",
             "--priority",
             "low",
+            "--category",
+            "Home",
         ]);
         match cli.command {
             Commands::List {
                 search,
                 completed,
                 priority,
+                category,
+                all,
             } => {
                 assert_eq!(search, Some("milk".to_string()));
                 assert!(completed);
                 assert_eq!(priority, Some(Priority::Low));
+                assert_eq!(category, Some("Home".to_string()));
+                assert!(!all);
             }
             _ => panic!("Expected List command"),
         }
+    }
+
+    #[test]
+    fn test_list_tasks_all_flag() {
+        let cli = parse_args(&["trt", "list", "--all"]);
+        match cli.command {
+            Commands::List { category, all, .. } => {
+                assert!(category.is_none());
+                assert!(all);
+            }
+            _ => panic!("Expected List command"),
+        }
+    }
+
+    #[test]
+    fn test_list_tasks_category_and_all_conflict() {
+        // clap enforces this at parse time so `main` never has to reconcile
+        // "narrow to this category" and "ignore the context" at once.
+        let result = Cli::try_parse_from(["trt", "list", "--category", "Home", "--all"]);
+        assert!(result.is_err());
     }
 
     #[test]

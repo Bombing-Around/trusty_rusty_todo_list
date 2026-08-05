@@ -949,6 +949,51 @@ fn resolve_task_scope(
     }
 }
 
+/// Resolves the category `list` should narrow to: `Some` scopes to one
+/// category, `None` means every category.
+///
+/// This looks like `resolve_task_scope` but answers a different question.
+/// `resolve_task_scope` picks a *search* scope for commands that already have
+/// a task reference to disambiguate with, so an unset context degrading to
+/// `None` (search everywhere) is harmless. `list` has no task reference to
+/// fall back on - `None` here is the actual answer shown to the user - so
+/// getting the precedence wrong doesn't surface as an occasional
+/// disambiguation prompt, it surfaces as `list` silently showing tasks from
+/// every category while the user believes `category use` is still narrowing
+/// their view. Hence the explicit three-way match, spelled out rather than
+/// reused, and `--all` short-circuiting to `None` before the context is even
+/// consulted:
+///
+/// 1. an explicit `--category` always wins,
+/// 2. `--all` (clap rejects it alongside `--category`, so this arm is
+///    reached only when `category` is `None`) forces every category
+///    regardless of context,
+/// 3. otherwise, the current category context - but only if one was really
+///    set via `category use`. As with `resolve_add_category`, this checks
+///    `has_explicit_category_context` rather than `get_current_category`
+///    directly: the latter answers `Some(UNCATEGORIZED_ID)` even when no
+///    context was ever set, which would silently narrow every unscoped
+///    `list` to Uncategorized instead of showing everything.
+fn resolve_list_category(
+    category_manager: &CategoryManager,
+    category: Option<String>,
+    all: bool,
+) -> Result<Option<u64>, CliError> {
+    if let Some(reference) = category {
+        return Ok(Some(resolve_category(category_manager, &reference)?.id));
+    }
+
+    if all {
+        return Ok(None);
+    }
+
+    if category_manager.has_explicit_category_context() {
+        return Ok(category_manager.get_current_category());
+    }
+
+    Ok(None)
+}
+
 /// The category ID commands with *no* `--category` argument at all
 /// (`CheckAll`/`UncheckAll`, the simple `move` syntax) must operate in.
 ///
@@ -1155,10 +1200,25 @@ fn run_task_command(
             search,
             completed,
             priority,
+            category,
+            all,
         } => {
             let priority = priority.map(to_model_priority);
-            let tasks = task_manager.list_tasks(search.as_deref(), completed, priority)?;
-            println!("Tasks:");
+            let category_id = resolve_list_category(&category_manager, category, all)?;
+            let tasks =
+                task_manager.list_tasks(search.as_deref(), completed, priority, category_id)?;
+            // Same reasoning as `add` naming the category it actually landed
+            // in: `--category` is optional and the context can be narrowing
+            // silently, so the header states which category (if any) is in
+            // effect rather than leaving the user to guess why a task they
+            // know exists is missing from the list.
+            match category_id {
+                Some(id) => {
+                    let category_name = category_display_name(&category_manager, id)?;
+                    println!("Tasks in category '{}':", category_name);
+                }
+                None => println!("Tasks:"),
+            }
             for task in tasks {
                 let status = if task.completed { "x" } else { " " };
                 let category_name = category_display_name(&category_manager, task.category_id)?;
