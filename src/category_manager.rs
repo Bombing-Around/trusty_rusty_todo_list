@@ -139,32 +139,49 @@ impl<'a> CategoryManager<'a> {
         self.storage.save(&data)
     }
 
+    /// Renames a category and/or updates its description in a single write.
+    ///
+    /// `new_name` is optional so `category update` can be used to change only
+    /// the description, leaving the name untouched - mirroring
+    /// `TaskManager::update_task`'s reason for the same shape. `new_description`
+    /// is the same "double option" as `Task::set_description`/
+    /// `TaskManager::update_task`: `None` leaves the description alone,
+    /// `Some(None)` clears it (`category update --clear-description`), and
+    /// `Some(Some(text))` replaces it.
     pub fn update_category(
         &mut self,
         category_id: u64,
-        new_name: String,
+        new_name: Option<String>,
+        new_description: Option<Option<String>>,
     ) -> Result<(), StorageError> {
         let mut data = self.storage.load()?;
 
-        // Renaming onto the synthesized category's name has the same problem
-        // as creating it outright - see `add_category`.
-        if is_reserved_category_name(&new_name) {
-            return Err(StorageError::DuplicateCategory(new_name));
-        }
+        if let Some(ref name) = new_name {
+            // Renaming onto the synthesized category's name has the same
+            // problem as creating it outright - see `add_category`.
+            if is_reserved_category_name(name) {
+                return Err(StorageError::DuplicateCategory(name.clone()));
+            }
 
-        // Check for duplicate names
-        if data
-            .categories
-            .iter()
-            .any(|c| c.name.to_lowercase() == new_name.to_lowercase())
-        {
-            return Err(StorageError::DuplicateCategory(new_name));
+            // Check for duplicate names
+            if data
+                .categories
+                .iter()
+                .any(|c| c.name.to_lowercase() == name.to_lowercase())
+            {
+                return Err(StorageError::DuplicateCategory(name.clone()));
+            }
         }
 
         if let Some(category) = data.categories.iter_mut().find(|c| c.id == category_id) {
-            category
-                .update_name(new_name)
-                .map_err(|e| StorageError::Model(e.to_string()))?;
+            if let Some(name) = new_name {
+                category
+                    .update_name(name)
+                    .map_err(|e| StorageError::Model(e.to_string()))?;
+            }
+            if let Some(description) = new_description {
+                category.set_description(description);
+            }
             self.storage.save(&data)?;
             Ok(())
         } else {
@@ -390,7 +407,7 @@ mod tests {
             .expect("Failed to add category");
 
         // Update it
-        let result = manager.update_category(id, "Updated".to_string());
+        let result = manager.update_category(id, Some("Updated".to_string()), None);
         assert!(result.is_ok());
 
         let categories = manager
@@ -587,7 +604,7 @@ mod tests {
         // Renaming onto it is refused for the same reason.
         let id = manager.add_category("Work".to_string(), None).unwrap();
         assert!(manager
-            .update_category(id, "Uncategorized".to_string())
+            .update_category(id, Some("Uncategorized".to_string()), None)
             .is_err());
     }
 
@@ -692,5 +709,58 @@ mod tests {
         let id = manager.add_category("Work".to_string(), None).unwrap();
         manager.use_category(id).unwrap();
         assert!(manager.has_explicit_category_context());
+    }
+
+    #[test]
+    fn add_category_persists_a_description() {
+        let test_storage = TestStorage::new();
+        let mut manager = CategoryManager::new(test_storage.storage());
+
+        let id = manager
+            .add_category("Work".to_string(), Some("Job stuff".to_string()))
+            .unwrap();
+
+        let category = manager.get_category(id).unwrap().unwrap();
+        assert_eq!(category.description.as_deref(), Some("Job stuff"));
+    }
+
+    #[test]
+    fn update_category_can_change_only_the_description_leaving_the_name_alone() {
+        let test_storage = TestStorage::new();
+        let mut manager = CategoryManager::new(test_storage.storage());
+
+        let id = manager.add_category("Work".to_string(), None).unwrap();
+        manager
+            .update_category(id, None, Some(Some("Job stuff".to_string())))
+            .unwrap();
+
+        let category = manager.get_category(id).unwrap().unwrap();
+        assert_eq!(category.name, "Work");
+        assert_eq!(category.description.as_deref(), Some("Job stuff"));
+    }
+
+    /// The "double option" on `new_description` is what lets a description
+    /// be cleared at all: a plain `Option<String>` could not tell "leave it
+    /// alone" apart from "clear it", since both would be `None`.
+    #[test]
+    fn update_category_clears_a_description_only_when_explicitly_told_to() {
+        let test_storage = TestStorage::new();
+        let mut manager = CategoryManager::new(test_storage.storage());
+
+        let id = manager
+            .add_category("Work".to_string(), Some("Job stuff".to_string()))
+            .unwrap();
+
+        // `None` for `new_description` leaves the existing description alone.
+        manager
+            .update_category(id, Some("Werk".to_string()), None)
+            .unwrap();
+        let category = manager.get_category(id).unwrap().unwrap();
+        assert_eq!(category.description.as_deref(), Some("Job stuff"));
+
+        // `Some(None)` clears it.
+        manager.update_category(id, None, Some(None)).unwrap();
+        let category = manager.get_category(id).unwrap().unwrap();
+        assert_eq!(category.description, None);
     }
 }

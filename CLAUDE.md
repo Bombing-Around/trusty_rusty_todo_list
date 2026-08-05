@@ -25,7 +25,7 @@ three before pushing; `clippy -- -D warnings` is stricter than a bare
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.rs` | Thin dispatch. Parses, opens storage, matches commands, prints. Resolution helpers (`resolve_add_category`, `resolve_task_scope`, `require_category_context`) live here because they need both config and storage. |
+| `src/main.rs` | Thin dispatch. Parses, opens storage, matches commands, prints. Resolution helpers (`resolve_add_category`, `resolve_list_category`, `resolve_task_scope`, `require_category_context`, `resolve_description_update`) live here because they need both config and storage. |
 | `src/cli.rs` | clap definitions only. No behavior. Unit tests assert parsing. |
 | `src/config.rs` | Config schema, validation, persistence. Knows nothing about tasks. |
 | `src/models/` | `Task`, `Category`, `Priority`, `StorageData`, error types. |
@@ -76,8 +76,8 @@ without a TTY, and why nothing hangs in CI.
 
 **Soft deletion is a `deleted_at` timestamp, not a magic category.** A deleted
 task keeps its real `category_id` so restore is lossless. `live_tasks()` excludes
-them; `get_deleted_tasks()` returns them. `list`/`search` must go through
-`live_tasks()`.
+them; `get_deleted_tasks()` returns them. `list` (there is no separate `search`
+command - `--search` is one of `list`'s filters) must go through `live_tasks()`.
 
 **Each storage backend owns its own file** inside the `storage.path` *directory*
 (`trt-data.json`, `trt-data.db`). They must never point at the same path.
@@ -179,6 +179,42 @@ and a `ConfigManager::save` that would have discarded the stored config.
 If something is unused, delete it. If it must stay, mark the *item*, not its
 block, and say why in a comment.
 
+## State as of #54, #55, #70
+
+Three rough edges landed together, built as parallel branches and merged.
+
+- **`list` honours the category context.** With no flag it narrows to an
+  explicitly-set context and prints `Tasks in category '<name>':` so the
+  narrowing is visible; `--category` overrides, `--all` ignores the context.
+  Filtering is one pass over `live_tasks()` in `TaskManager` — the storage
+  layer deliberately grew no filter combinators back, and four that lost
+  their last caller were deleted.
+- **`description` is reachable** on both tasks and categories. `trt show`
+  exists for task detail because descriptions run long and `list` is a scan;
+  `category list` shows category descriptions inline, and shows *nothing*
+  where there is none rather than a placeholder.
+- **`update --to` and `category update <new_name>` are optional**, so an edit
+  that changes only a description need not rename anything. Both refuse an
+  invocation naming no field at all rather than printing a misleading
+  "updated". Blanking a description is `--clear-description` only — an empty
+  `--description ""` deliberately does not do it.
+- **`validate_storage_path` asks `faccessat`/`AT_EACCESS`**, not the owner's
+  mode bit, so it answers whether *this process* can write. `libc` is a
+  Unix-only direct dependency; it was already in the tree via `dirs`. Windows
+  is still a no-op, now documented as deliberate.
+
+Two things this left that are worth knowing before touching the area:
+
+- **`list -c` is `--completed`, not `--category`** — the one command where
+  `-c` does not mean category. `--completed` is also one-way: bare `list`
+  shows everything and `--completed` narrows to completed, with no way to ask
+  for only the incomplete ones.
+- **Tests that skip under root pass vacuously in a root sandbox.** The two
+  `validate_storage_path` permission tests return early for `geteuid() == 0`,
+  which is correct — root really can write through a cleared mode bit — but
+  it means a green local run in a root container proves less than the number
+  suggests. CI runs unprivileged, so they do execute there.
+
 ## Roadmap
 
 `docs/ROADMAP.md` is the plan past phase 1: release engineering first, then
@@ -189,6 +225,12 @@ same list as sub-issues.
 Read it before scoping new work. Several items are ordered behind decisions
 nobody has made yet — building them in the wrong order means encoding a guess
 about date formats or display timezones into four places at once.
+
+It also now carries the MSRV decision. The short version: the floor is an
+output, not an input — declare what the dependencies actually require rather
+than defending a number. The `rusqlite` bump needs both a `FromSql` code fix
+and a toolchain bump to 1.85, and both are cheaper before #44 publishes an
+install story than after.
 
 ## Rough edges and session cost
 

@@ -66,20 +66,16 @@ fn validate_storage_path(path: &str) -> Result<PathBuf, ConfigError> {
     // up - deliberately, because it was rejecting paths the runtime creates
     // without complaint.
     //
-    // Second, the writability check below is a weaker guard than it looks and
-    // does not make up the difference. It reads the *owner's* write bit, not
-    // whether the calling process can write. `/` is mode 0755, so that bit is
-    // set and a mistyped absolute root like `/hme/user/x` - whose nearest
-    // existing ancestor is `/` - passes for every user, not just root. What
-    // the check actually catches is a directory whose owner write bit has been
-    // cleared, which is a deliberate configuration rather than a typo.
-    //
-    // The practical guarantee is therefore narrow: this confirms some existing
-    // directory is above the path and is not marked unwritable, and leaves the
-    // real permission answer to the `create_dir_all` at the point of use,
-    // which reports an actual error from the actual operation. Making the
-    // permission question meaningful means asking about effective access
-    // rather than mode bits, which is a separate decision from this one.
+    // Second, the writability check below asks the effective-access question
+    // rather than reading mode bits, which is what makes it worth having. A
+    // mode-bit read (`metadata().mode() & 0o200`) only reports the *owner's*
+    // write bit - it says nothing about the calling process's uid/gid, group
+    // membership, ACLs, or a read-only mount. `/` is mode 0755, so a mistyped
+    // absolute root like `/hme/user/x` - whose nearest existing ancestor is
+    // `/` - would pass that check for every user, not just root, which
+    // defeats the point of checking anything. `faccessat` with `AT_EACCESS`
+    // instead asks the kernel "can *this* process write here", which is the
+    // question a validation function actually needs answered.
     //
     // The `else` below is close to unreachable and is kept as a total match
     // rather than an `expect`: `ancestors()` terminates at the filesystem
@@ -99,24 +95,62 @@ fn validate_storage_path(path: &str) -> Result<PathBuf, ConfigError> {
     // path components follow it.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
-        if let Ok(metadata) = existing_ancestor.metadata() {
-            if metadata.mode() & 0o200 == 0 {
-                return Err(ConfigError::InvalidConfig(format!(
-                    "Directory is not writable: {}",
-                    existing_ancestor.display()
-                )));
-            }
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        // `existing_ancestor` came from `Path::exists()` on a real filesystem
+        // entry, so it cannot contain an interior NUL - `CString::new` only
+        // fails on that - but the input is still an external path, so this
+        // reports an error instead of unwrapping.
+        let c_path = CString::new(existing_ancestor.as_os_str().as_bytes()).map_err(|_| {
+            ConfigError::InvalidConfig(format!(
+                "Path contains invalid characters: {}",
+                existing_ancestor.display()
+            ))
+        })?;
+
+        // SAFETY: `c_path` is a valid NUL-terminated string owned for the
+        // duration of this call, and `faccessat` only reads through the
+        // pointer - it does not retain it past the call. `AT_FDCWD` is the
+        // standard sentinel for "no directory file descriptor, resolve
+        // exactly like `open` would" - an absolute `existing_ancestor`
+        // resolves the same way regardless, and a relative one resolves
+        // against this process's current directory, which is what
+        // `create_dir_all` at the point of use would do too.
+        //
+        // `AT_EACCESS` is what makes this the effective-access check: without
+        // it, `faccessat` falls back to testing the real uid/gid rather than
+        // the effective ones, which only differs for a setuid/setgid binary.
+        // This process is not one, but the flag costs nothing and asks for
+        // the specific semantic actually wanted rather than one that happens
+        // to coincide with it today.
+        let accessible = unsafe {
+            libc::faccessat(
+                libc::AT_FDCWD,
+                c_path.as_ptr(),
+                libc::W_OK,
+                libc::AT_EACCESS,
+            )
+        };
+        if accessible != 0 {
+            return Err(ConfigError::InvalidConfig(format!(
+                "Directory is not writable: {}",
+                existing_ancestor.display()
+            )));
         }
     }
-    // Not checked on Windows: writability there is an ACL question, and a
-    // Unix-style mode-bit check has nothing in that model to read. Reporting
-    // "writable" or "not writable" from data that does not encode either is
-    // worse than not asking - a wrong verdict here would reject a path the
+    // Not checked on Windows: writability there is an ACL question that
+    // `faccessat`'s POSIX permission model has no equivalent for, and the
+    // Unix-only mode-bit read this replaced was never meaningful there either
+    // - the `#[cfg(unix)]` block above has always been a no-op on Windows.
+    // This is a deliberate gap, not an oversight: reporting "writable" or
+    // "not writable" from an access model that does not apply would be worse
+    // than not asking, because a wrong verdict here would reject a path the
     // runtime could actually use, or accept one it can't, *because* of this
     // check rather than in spite of it. The real `create_dir_all`/file write
     // at the point of use still surfaces an actual permission error if there
-    // is one.
+    // is one - which, on Windows, is also the *only* place that question gets
+    // answered.
 
     Ok(path)
 }
@@ -862,10 +896,24 @@ mod tests {
     /// some specific real path is absent on whatever machine runs the test,
     /// which is exactly the ambient-state dependency the other test above
     /// avoids by using a `TempDir`.
+    ///
+    /// Skipped when the test itself is running as root. A stripped mode bit
+    /// is exactly what a raw mode-bit read would have caught, but it is not
+    /// what `faccessat`/`AT_EACCESS` reports for root: the kernel grants root
+    /// write access via `CAP_DAC_OVERRIDE` regardless of the mode bits, so
+    /// the effective-access check correctly says this directory *is*
+    /// writable by a root caller. That is the more accurate answer, not a
+    /// bug in the check - it is simply a different question than "what do
+    /// the mode bits say", which is the whole reason for making the change.
     #[cfg(unix)]
     #[test]
     fn test_validate_storage_path_rejects_an_unwritable_ancestor() {
         use std::os::unix::fs::PermissionsExt;
+
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping: running as root, which can write here regardless of mode bits");
+            return;
+        }
 
         let temp_dir = TempDir::new().unwrap();
         let bad_root = temp_dir.path().join("bad_root");
@@ -880,5 +928,29 @@ mod tests {
         // drop, so this test's own teardown doesn't depend on removal
         // working without it.
         std::fs::set_permissions(&bad_root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// The regression this fix exists for: `/hme/user/x` (a typo'd absolute
+    /// root) resolves, via the nearest-existing-ancestor walk above, to `/`
+    /// itself, which is mode 0755 - so the *owner's* write bit the old check
+    /// read is set, and it accepted the typo for every user, not just root.
+    /// `faccessat`/`AT_EACCESS` asks the kernel whether *this* process can
+    /// write there instead of reading mode bits, and for an ordinary,
+    /// non-root process the kernel says no.
+    ///
+    /// Skipped rather than failed when the test itself is running as root:
+    /// root genuinely can write to `/`, so asserting rejection there would
+    /// be asserting something false about the environment, not about the
+    /// code under test.
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_storage_path_rejects_a_mistyped_absolute_root_for_an_ordinary_user() {
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping: running as root, which can write to /");
+            return;
+        }
+
+        let result = validate_storage_path("/definitely-not-a-real-trt-directory-8f3c1e/nested");
+        assert!(result.is_err());
     }
 }

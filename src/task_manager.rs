@@ -281,10 +281,31 @@ impl<'a> TaskManager<'a> {
         Ok(self.storage.purge_deleted_tasks(days_threshold)?)
     }
 
-    pub fn rename_task(&self, mut task: Task, new_title: String) -> Result<(), TaskManagerError> {
-        task.update_title(new_title)?;
-        self.storage.update_task(task)?;
-        Ok(())
+    /// Applies whichever of the CLI's `update` fields were actually given, in
+    /// a single storage write, and hands back the resulting task so the
+    /// caller can report on it without a second lookup.
+    ///
+    /// `new_description` is a "double option": `None` leaves the description
+    /// untouched, `Some(None)` clears it, and `Some(Some(text))` replaces it.
+    /// A single `Option<String>` could not tell "leave alone" apart from
+    /// "clear" - both would be `None` - which is exactly the accidental
+    /// clearing the CLI's explicit `--clear-description` flag exists to rule
+    /// out; see `main::resolve_description_update`, which is the only thing
+    /// that constructs this parameter.
+    pub fn update_task(
+        &self,
+        mut task: Task,
+        new_title: Option<String>,
+        new_description: Option<Option<String>>,
+    ) -> Result<Task, TaskManagerError> {
+        if let Some(title) = new_title {
+            task.update_title(title)?;
+        }
+        if let Some(description) = new_description {
+            task.set_description(description);
+        }
+        self.storage.update_task(task.clone())?;
+        Ok(task)
     }
 
     pub fn set_completed(&self, mut task: Task, completed: bool) -> Result<(), TaskManagerError> {
@@ -331,23 +352,37 @@ impl<'a> TaskManager<'a> {
     /// There's no dedicated flag for "incomplete only" in the CLI surface, so
     /// that combination isn't needed here.
     ///
-    /// Reuses the storage layer's already-tested combinators for the
-    /// (completion, priority) pair and only does its own filtering for
-    /// `--search`, since no storage-level combinator covers search alongside
-    /// the other two filters at once.
+    /// `category_id` is `list`'s category narrowing: `Some` restricts to that
+    /// one category (an explicit `--category`, or the current `category use`
+    /// context when the caller chose to honour it), `None` means every
+    /// category. This is deliberately a single pass over `live_tasks()`
+    /// rather than a dispatch across storage-level (completion, priority)
+    /// and (completion, category) combinators: two such combinators
+    /// (`get_tasks_by_priority_and_category`,
+    /// `get_tasks_by_completion_and_category`) existed once and were deleted
+    /// as unreachable dead code, because `list` never actually called them.
+    /// Adding a category axis here would have doubled that combinator count
+    /// again for the same reason - storage-level combinators only pay for
+    /// themselves when more than one caller needs the exact same filter
+    /// shape, and `list` is still the only caller of any of this.
     pub fn list_tasks(
         &self,
         search: Option<&str>,
         completed_only: bool,
         priority: Option<Priority>,
+        category_id: Option<u64>,
     ) -> Result<Vec<Task>, TaskManagerError> {
-        let mut tasks = match (completed_only, priority) {
-            (true, Some(p)) => self.storage.get_tasks_by_completion_and_priority(true, p)?,
-            (true, None) => self.storage.get_completed_tasks()?,
-            (false, Some(p)) => self.storage.get_tasks_by_priority(p)?,
-            (false, None) => self.storage.get_all_tasks()?,
-        };
+        let mut tasks = self.storage.live_tasks()?;
 
+        if completed_only {
+            tasks.retain(|t| t.completed);
+        }
+        if let Some(priority) = priority {
+            tasks.retain(|t| t.priority == priority);
+        }
+        if let Some(category_id) = category_id {
+            tasks.retain(|t| t.category_id == category_id);
+        }
         if let Some(query) = search {
             let query = query.to_lowercase();
             tasks.retain(|t| t.title.to_lowercase().contains(&query));
@@ -565,7 +600,7 @@ mod tests {
 
         manager.delete_task(id).unwrap();
 
-        let listed = manager.list_tasks(None, false, None).unwrap();
+        let listed = manager.list_tasks(None, false, None, None).unwrap();
         assert!(listed.is_empty());
         assert!(storage.get_task(id).unwrap().unwrap().is_deleted());
     }
@@ -758,7 +793,10 @@ mod tests {
         add_categories(storage, &["Work"]);
         let id = add(storage, "Buy milk", 1, Priority::High);
         manager.delete_task(id).unwrap();
-        assert!(manager.list_tasks(None, false, None).unwrap().is_empty());
+        assert!(manager
+            .list_tasks(None, false, None, None)
+            .unwrap()
+            .is_empty());
 
         let mut prompter = ScriptedPrompter::new(vec![]);
         let task = manager
@@ -777,7 +815,7 @@ mod tests {
 
         // Visible to `list` again, and gone from the deleted set - so a
         // later flush can no longer destroy it.
-        let listed = manager.list_tasks(None, false, None).unwrap();
+        let listed = manager.list_tasks(None, false, None, None).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, id);
         assert!(manager.list_deleted().unwrap().is_empty());
@@ -860,22 +898,59 @@ mod tests {
             .set_completed(storage.get_task(milk).unwrap().unwrap(), true)
             .unwrap();
 
-        let all = manager.list_tasks(None, false, None).unwrap();
+        let all = manager.list_tasks(None, false, None, None).unwrap();
         assert_eq!(all.len(), 2);
 
-        let completed = manager.list_tasks(None, true, None).unwrap();
+        let completed = manager.list_tasks(None, true, None, None).unwrap();
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].id, milk);
 
         let high_priority = manager
-            .list_tasks(None, false, Some(Priority::High))
+            .list_tasks(None, false, Some(Priority::High), None)
             .unwrap();
         assert_eq!(high_priority.len(), 1);
         assert_eq!(high_priority[0].id, milk);
 
-        let search = manager.list_tasks(Some("bread"), false, None).unwrap();
+        let search = manager
+            .list_tasks(Some("bread"), false, None, None)
+            .unwrap();
         assert_eq!(search.len(), 1);
         assert_eq!(search[0].id, bread);
+    }
+
+    /// `list`'s category narrowing filters in the same pass as the other
+    /// three filters, and combines with them rather than overriding them -
+    /// e.g. `--category Work --completed` must still exclude Work's
+    /// incomplete tasks, not just tasks outside Work.
+    #[test]
+    fn list_tasks_filters_by_category_and_combines_with_other_filters() {
+        let test_storage = TestStorage::new();
+        let storage = test_storage.storage();
+        let manager = TaskManager::new(storage);
+        add_categories(storage, &["Work", "Home"]);
+        let work_milk = add(storage, "Buy milk", 1, Priority::High);
+        add(storage, "Buy bread", 2, Priority::High);
+        manager
+            .set_completed(storage.get_task(work_milk).unwrap().unwrap(), true)
+            .unwrap();
+
+        let work_only = manager.list_tasks(None, false, None, Some(1)).unwrap();
+        assert_eq!(work_only.len(), 1);
+        assert_eq!(work_only[0].id, work_milk);
+
+        let work_and_completed = manager.list_tasks(None, true, None, Some(1)).unwrap();
+        assert_eq!(work_and_completed.len(), 1);
+        assert_eq!(work_and_completed[0].id, work_milk);
+
+        let home_and_completed = manager.list_tasks(None, true, None, Some(2)).unwrap();
+        assert!(home_and_completed.is_empty());
+
+        // A soft-deleted task in the narrowed category must stay hidden,
+        // same as an unscoped list - `list_tasks` still goes through
+        // `live_tasks()` even when narrowing to a category.
+        manager.delete_task(work_milk).unwrap();
+        let after_delete = manager.list_tasks(None, false, None, Some(1)).unwrap();
+        assert!(after_delete.is_empty());
     }
 
     #[test]
@@ -894,6 +969,62 @@ mod tests {
         assert!(work_tasks[0].completed);
         let home_tasks = storage.get_tasks_by_category(2).unwrap();
         assert!(!home_tasks[0].completed);
+    }
+
+    #[test]
+    fn update_task_can_rename_and_set_a_description_together() {
+        let test_storage = TestStorage::new();
+        let storage = test_storage.storage();
+        let manager = TaskManager::new(storage);
+        let id = add(storage, "Buy milk", 0, Priority::Medium);
+        let task = storage.get_task(id).unwrap().unwrap();
+
+        let updated = manager
+            .update_task(
+                task,
+                Some("Buy oat milk".to_string()),
+                Some(Some("Unsweetened".to_string())),
+            )
+            .unwrap();
+
+        assert_eq!(updated.title, "Buy oat milk");
+        assert_eq!(updated.description.as_deref(), Some("Unsweetened"));
+
+        let stored = storage.get_task(id).unwrap().unwrap();
+        assert_eq!(stored.title, "Buy oat milk");
+        assert_eq!(stored.description.as_deref(), Some("Unsweetened"));
+    }
+
+    /// The "double option" on `new_description` is what makes clearing a
+    /// description an explicit act rather than an accidental side effect of
+    /// leaving `--description` off: `None` here leaves the field untouched,
+    /// while `Some(None)` is the only thing that clears it.
+    #[test]
+    fn update_task_clears_a_description_only_when_explicitly_told_to() {
+        let test_storage = TestStorage::new();
+        let storage = test_storage.storage();
+        let manager = TaskManager::new(storage);
+        let id = TaskManager::new(storage)
+            .add_task(
+                "Buy milk".to_string(),
+                0,
+                Priority::Medium,
+                Some("Whole milk".to_string()),
+            )
+            .unwrap();
+
+        // Renaming without mentioning the description leaves it alone.
+        let task = storage.get_task(id).unwrap().unwrap();
+        let updated = manager
+            .update_task(task, Some("Buy 2% milk".to_string()), None)
+            .unwrap();
+        assert_eq!(updated.description.as_deref(), Some("Whole milk"));
+
+        // Explicitly clearing it does.
+        let task = storage.get_task(id).unwrap().unwrap();
+        let updated = manager.update_task(task, None, Some(None)).unwrap();
+        assert_eq!(updated.description, None);
+        assert_eq!(updated.title, "Buy 2% milk");
     }
 
     #[test]

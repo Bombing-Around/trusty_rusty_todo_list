@@ -127,6 +127,15 @@ impl Task {
         Ok(())
     }
 
+    /// Sets or clears the task's description. Unlike `update_title`, `None`
+    /// is a legal value here rather than a rejected one - clearing a
+    /// description back to empty is a real, intentional operation (the
+    /// CLI's `update --clear-description`), not a mistake to guard against.
+    pub fn set_description(&mut self, description: Option<String>) {
+        self.description = description;
+        self.updated_at = Utc::now();
+    }
+
     pub fn move_to_category(&mut self, new_category_id: u64) {
         self.category_id = new_category_id;
         self.updated_at = Utc::now();
@@ -173,6 +182,13 @@ impl Category {
         }
         self.name = new_name;
         Ok(())
+    }
+
+    /// Sets or clears the category's description. See `Task::set_description`
+    /// for why `None` is accepted rather than rejected: clearing it is a
+    /// deliberate, explicit action (`category update --clear-description`).
+    pub fn set_description(&mut self, description: Option<String>) {
+        self.description = description;
     }
 
     pub fn set_order(&mut self, order: u32) {

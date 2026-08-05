@@ -64,5 +64,13 @@ rusqlite = { version = "0.30.0", features = ["bundled", "chrono"] }
 dirs = "6.0.0"
 shellexpand = "3.1.0"
 
+# Only pulled in on Unix, where it backs the effective-write-access check in
+# `config::validate_storage_path` (`faccessat`/`AT_EACCESS`). It is already in
+# the dependency tree transitively - `dirs` depends on `dirs-sys`, which
+# depends on `libc` - so declaring it directly adds no new crate to the tree,
+# just a direct edge to one already being built.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3.8.1"

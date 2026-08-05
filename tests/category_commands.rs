@@ -108,6 +108,81 @@ fn category_lifecycle() {
     assert!(err.contains("Nope"), "{err}");
 }
 
+#[test]
+fn category_add_sets_a_description_and_list_shows_it() {
+    let trt = Trt::new();
+    trt.ok(&["category", "add", "Work", "--description", "Job stuff"]);
+
+    let out = trt.ok(&["category", "list"]);
+    assert!(out.contains("Work (description: Job stuff)"), "{out}");
+
+    // Omitting --description leaves it unset, and an unset description
+    // contributes nothing to the line rather than a "(none)" placeholder -
+    // `category list` is a scan, so a row with no description says nothing
+    // about one.
+    trt.ok(&["category", "add", "Home"]);
+    let out = trt.ok(&["category", "list"]);
+    assert!(
+        out.lines().any(|line| line.trim_end() == "2: Home"),
+        "{out}"
+    );
+}
+
+#[test]
+fn category_update_can_set_and_clear_a_description_independently_of_the_name() {
+    let trt = Trt::new();
+    trt.ok(&["category", "add", "Work"]);
+
+    trt.ok(&["category", "update", "Work", "--description", "Job stuff"]);
+    let out = trt.ok(&["category", "list"]);
+    assert!(out.contains("Work (description: Job stuff)"), "{out}");
+
+    // Renaming alone (no --description) leaves the description untouched.
+    trt.ok(&["category", "update", "Work", "Werk"]);
+    let out = trt.ok(&["category", "list"]);
+    assert!(out.contains("Werk (description: Job stuff)"), "{out}");
+
+    // Clearing back to empty requires the explicit flag, and leaves the line
+    // carrying no description segment at all.
+    trt.ok(&["category", "update", "Werk", "--clear-description"]);
+    let out = trt.ok(&["category", "list"]);
+    assert!(
+        out.lines().any(|line| line.trim_end() == "1: Werk"),
+        "{out}"
+    );
+}
+
+#[test]
+fn category_update_with_no_fields_at_all_is_a_clean_error() {
+    let trt = Trt::new();
+    trt.ok(&["category", "add", "Work"]);
+
+    // Neither a new name, --description, nor --clear-description: nothing
+    // to update, refused rather than silently printing a misleading
+    // "updated" message.
+    let err = trt.fail(&["category", "update", "Work"]);
+    assert!(err.contains("nothing to update"), "{err}");
+}
+
+/// Backend parity for the description field: everything above runs against
+/// the default JSON backend, this repeats the round trip against SQLite.
+#[test]
+fn category_description_round_trips_through_the_sqlite_backend() {
+    let trt = Trt::new();
+    trt.ok(&["config", "set", "storage.type=sqlite"]);
+    trt.ok(&["category", "add", "Work", "--description", "Job stuff"]);
+
+    let out = trt.ok(&["category", "list"]);
+    assert!(out.contains("Work (description: Job stuff)"), "{out}");
+
+    trt.ok(&["category", "update", "Work", "--clear-description"]);
+    let out = trt.ok(&["category", "list"]);
+    assert!(
+        out.lines().any(|line| line.trim_end() == "1: Work"),
+        "{out}"
+    );
+}
+
 /// Renaming the category that `default-category` names must carry the
 /// setting along, rather than leaving it pointed at a name that no longer
 /// resolves to anything.
